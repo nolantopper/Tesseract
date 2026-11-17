@@ -1,7 +1,5 @@
 # Tesseract
 
-<img src="assets/icon.png" alt="" width="72" align="right">
-
 Preview local 3D models, archives, media, and robotics recordings beside your Codex chat. Orbit a model, browse a ZIP, or flag a moment in an MCAP recording.
 
 ![Tesseract previewing a bearing bracket](assets/preview.png)
