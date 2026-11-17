@@ -12,7 +12,7 @@ npm test
 npm run test:browser
 ```
 
-Run `npm run format` to apply the project's formatting. To open the standalone viewer while working on a change, run `npm run dev -- --web` after the first build.
+Run `npm run format` to apply the project's formatting. To preview changes in Codex Desktop, build the install ZIP with `npm run release` and follow the [desktop instructions](README.md#install-in-codex-desktop).
 
 ## Follow a file through the viewer
 

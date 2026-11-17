@@ -55,7 +55,11 @@ async function smokeTest(root) {
   });
   try {
     await client.connect(transport);
-    assert.deepEqual(client.getServerVersion(), { name, version });
+    assert.deepEqual(client.getServerVersion(), {
+      name,
+      title: manifest.extensions['com.openai'].interface.displayName,
+      version,
+    });
     const { tools } = await client.listTools();
     assert.ok(tools.some((tool) => tool.name === 'artifact_viewer'));
     const picker = await client.callTool({ name: 'artifact_viewer', arguments: {} });

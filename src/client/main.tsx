@@ -12,12 +12,10 @@ import type { Artifact, Selection } from '../shared/types';
 import {
   canRetryHostFile,
   connect,
-  embedded,
   openLocalFile,
   retryHostFile,
   select,
   state,
-  stateById,
   toggleFullscreen,
 } from './backend';
 import { resolveViewer } from './registry';
@@ -43,9 +41,7 @@ function Viewer() {
   const [artifact, setArtifact] = useState<Artifact>();
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [filePicker, setFilePicker] = useState(
-    () => !embedded && !new URLSearchParams(location.hash.slice(1)).has('artifact'),
-  );
+  const [filePicker, setFilePicker] = useState(false);
   const [openingFile, setOpeningFile] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const pendingFile = useRef<AbortController | null>(null);
@@ -91,21 +87,7 @@ function Viewer() {
       setError,
       () => setFilePicker(true),
     ).catch((e) => setError(e.message));
-    const navigate = () => {
-      const id = new URLSearchParams(location.hash.slice(1)).get('artifact');
-      if (id)
-        stateById(id)
-          .then((a) => {
-            if (new URLSearchParams(location.hash.slice(1)).get('artifact') === id) showArtifact(a);
-          })
-          .catch((e) => setError(e.message));
-    };
-    navigate();
-    window.addEventListener('hashchange', navigate);
-    return () => {
-      pendingFile.current?.abort();
-      window.removeEventListener('hashchange', navigate);
-    };
+    return () => pendingFile.current?.abort();
   }, []);
   useEffect(() => {
     if (!artifact || artifact.id.startsWith('local-')) return;
@@ -279,6 +261,8 @@ function Viewer() {
     </main>
   );
 }
-const root = createRoot(document.getElementById('root')!);
-window.addEventListener('tesseract-teardown', () => root.unmount(), { once: true });
-root.render(<Viewer />);
+if (window.parent !== window) {
+  const root = createRoot(document.getElementById('root')!);
+  window.addEventListener('tesseract-teardown', () => root.unmount(), { once: true });
+  root.render(<Viewer />);
+}

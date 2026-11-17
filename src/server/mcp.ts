@@ -19,12 +19,8 @@ import { version } from '../shared/version.js';
 export const RESOURCE_URI = 'ui://tesseract/viewer.html';
 const readOnly = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
 const compress = promisify(gzip);
-export function createMcpServer(
-  store: ArtifactStore,
-  viewerUrl: (id?: string) => string,
-  embeddedFile: string,
-) {
-  const server = new McpServer({ name: 'tesseract', version });
+export function createMcpServer(store: ArtifactStore, embeddedFile: string) {
+  const server = new McpServer({ name: 'tesseract', title: 'Tesseract', version });
   const result = (data: Record<string, unknown>) => ({
     content: [{ type: 'text' as const, text: JSON.stringify(data) }],
     structuredContent: data,
@@ -80,7 +76,7 @@ export function createMcpServer(
         run(async () => {
           const artifact = await store.inspect(path);
           if (name === 'artifact_open') store.latestId = artifact.id;
-          return { artifact, viewerUrl: viewerUrl(artifact.id) };
+          return { artifact };
         }),
     );
   }

@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import * as T from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import CadWorker from './cad.worker?worker';
+import cadWorkerUrl from './cad.worker?worker&url';
 import ModelWorker from './model.worker?worker&inline';
 import type { Part } from './model.worker';
 import type { ViewerProps } from '../../shared/types';
-import { readBytes, cadDecoder, embedded, embeddedParserWorker } from '../backend';
+import { readBytes, cadDecoder, embeddedParserWorker } from '../backend';
 import ViewCube, { updateViewCube } from './ViewCube';
 
 export default function ModelViewer({ artifact, onSelect }: ViewerProps) {
@@ -210,9 +210,7 @@ export default function ModelViewer({ artifact, onSelect }: ViewerProps) {
             : undefined;
           if (abort.signal.aborted) return;
           worker = usesDecoder
-            ? embedded
-              ? await embeddedParserWorker('cad', abort.signal)
-              : new CadWorker()
+            ? await embeddedParserWorker(cadWorkerUrl, abort.signal)
             : new ModelWorker();
           if (abort.signal.aborted) {
             worker.terminate();

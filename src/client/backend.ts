@@ -8,19 +8,15 @@ import { detectFormat } from '../shared/formats';
 import { hostResourceFile, hostPreviewLimit } from './host-file';
 import { version } from '../shared/version';
 
-const params = new URLSearchParams(location.hash.slice(1));
-const token = params.get('token') ?? '';
 const localFiles = new Map<string, File>();
 const previewLimit = hostPreviewLimit;
 const byteResponse = z.object({ data: z.string() });
 const pickerResponse = z.object({ picker: z.literal(true) });
 const MAX_PARSER_BYTES = 16 * 1024 * 1024;
 const parserResponse = byteResponse.extend({ total: z.number().int().positive() });
-const errorResponse = z.object({ error: z.string() });
 let bridge: App | undefined;
 let pendingHostFile: AbortController | undefined;
 let reloadHostFile: (() => Promise<void>) | undefined;
-export const embedded = window.parent !== window && !token;
 export const canRetryHostFile = () => reloadHostFile !== undefined;
 export async function retryHostFile() {
   await reloadHostFile?.();
@@ -32,7 +28,6 @@ export async function connect(
   onError: (message: string) => void,
   onPicker: () => void,
 ) {
-  if (!embedded) return;
   const { App, applyHostStyleVariables } = await import('@modelcontextprotocol/ext-apps');
   const app = new App({ name: 'Tesseract', version }, {});
   bridge = app;
@@ -111,14 +106,11 @@ export async function connect(
   applyContext(app.getHostContext());
 }
 export async function toggleFullscreen() {
-  if (embedded && bridge) {
-    const context = bridge.getHostContext();
-    const mode = context?.displayMode === 'fullscreen' ? 'inline' : 'fullscreen';
-    if (!context?.availableDisplayModes?.includes(mode))
-      throw new Error('This host does not offer fullscreen viewing.');
-    await bridge.requestDisplayMode({ mode });
-  } else if (document.fullscreenElement) await document.exitFullscreen();
-  else await document.documentElement.requestFullscreen();
+  const context = bridge?.getHostContext();
+  const mode = context?.displayMode === 'fullscreen' ? 'inline' : 'fullscreen';
+  if (!bridge || !context?.availableDisplayModes?.includes(mode))
+    throw new Error('This host does not offer fullscreen viewing.');
+  await bridge.requestDisplayMode({ mode });
 }
 async function tool(name: string, args: Record<string, unknown>, signal?: AbortSignal) {
   if (!bridge) throw new Error('Host connection unavailable.');
@@ -129,35 +121,14 @@ async function tool(name: string, args: Record<string, unknown>, signal?: AbortS
     );
   return result.structuredContent;
 }
-async function api(route: string, data?: unknown): Promise<unknown> {
-  const response = await fetch(`/api/${route}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(data ? { 'Content-Type': 'application/json' } : {}),
-    },
-    ...(data ? { method: 'POST', body: JSON.stringify(data) } : {}),
-  });
-  const result: unknown = await response.json();
-  if (!response.ok) {
-    const parsed = errorResponse.safeParse(result);
-    throw new Error(parsed.success ? parsed.data.error : 'Artifact operation failed.');
-  }
-  return result;
-}
 export async function state(a: Artifact): Promise<Artifact> {
   if (localFiles.has(a.id)) return a;
-  const result = embedded
-    ? await tool('artifact_state', { artifactId: a.id })
-    : await api(`artifact/${a.id}`);
+  const result = await tool('artifact_state', { artifactId: a.id });
   return artifactResponse.parse(result).artifact;
-}
-export async function stateById(id: string): Promise<Artifact> {
-  return artifactResponse.parse(await api(`artifact/${id}`)).artifact;
 }
 export async function select(selection: Selection) {
   if (localFiles.has(selection.artifactId)) return false;
-  if (embedded) await tool('artifact_select', selection);
-  else await api('selection', selection);
+  await tool('artifact_select', selection);
   return true;
 }
 export async function openLocalFile(file: File, signal: AbortSignal): Promise<Artifact> {
@@ -217,14 +188,6 @@ export async function readBytes(
   if (length === 0) return new ArrayBuffer(0);
   const file = localFiles.get(a.id);
   if (file) return file.slice(0, length).arrayBuffer();
-  if (!embedded) {
-    const response = await fetch(fileUrl(a), {
-      headers: prefix ? { Range: `bytes=0-${Math.max(0, length - 1)}` } : {},
-      signal,
-    });
-    if (!response.ok) throw new Error('Cannot read file. It may have changed; refresh the viewer.');
-    return response.arrayBuffer();
-  }
   const result = new Uint8Array(length);
   for (let offset = 0; offset < length; offset += 1024 * 1024) {
     signal?.throwIfAborted();
@@ -246,15 +209,11 @@ export async function readBytes(
   }
   return result.buffer;
 }
-function fileUrl(a: Artifact) {
-  return `/api/file/${a.id}?token=${token}&revision=${encodeURIComponent(a.revision)}`;
-}
 export async function mediaUrl(
   a: Artifact,
   signal?: AbortSignal,
 ): Promise<{ url: string; release: () => void }> {
   const local = localFiles.get(a.id);
-  if (!embedded && !local) return { url: fileUrl(a), release: () => {} };
   const blob =
     local?.slice(0, local.size, a.format.mime) ??
     new Blob([await readBytes(a, undefined, false, signal)], { type: a.format.mime });
@@ -263,27 +222,17 @@ export async function mediaUrl(
 }
 
 export async function openPath(path: string): Promise<Artifact> {
-  return artifactResponse.parse(
-    embedded ? await tool('artifact_open', { path }) : await api('open', { path }),
-  ).artifact;
+  return artifactResponse.parse(await tool('artifact_open', { path })).artifact;
 }
 
 export async function cadDecoder(signal?: AbortSignal, kind = 'cad'): Promise<ArrayBuffer> {
-  if (!embedded) {
-    const response = await fetch(`/api/cad-decoder?kind=${kind}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal,
-    });
-    if (!response.ok) throw new Error('CAD decoder unavailable.');
-    return response.arrayBuffer();
-  }
   return readBundledBytes('artifact_cad_decoder', kind, signal);
 }
 
-export async function embeddedParserWorker(
-  kind: 'cad' | 'data',
-  signal: AbortSignal,
-): Promise<Worker> {
+export async function embeddedParserWorker(assetUrl: string, signal: AbortSignal): Promise<Worker> {
+  // Vite emits the worker asset. The host bridge supplies its bytes inside the sandbox.
+  const kind = /\/(cad|data)\.worker\.js$/.exec(assetUrl)?.[1];
+  if (!kind) throw new Error('Unknown parser worker.');
   const gzip = await readBundledBytes('artifact_parser_script', kind, signal);
   const stream = new Blob([gzip]).stream().pipeThrough(new DecompressionStream('gzip'));
   const script = await new Response(stream).arrayBuffer();

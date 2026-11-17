@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, writeFile, symlink, rm, open, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -7,7 +8,6 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { FileAccess } from '../src/server/files.js';
 import { ArtifactStore } from '../src/server/store.js';
-import { startHttp } from '../src/server/http.js';
 import { inspectMcap } from '../src/server/mcap.js';
 import { detectFormat } from '../src/shared/formats.js';
 import { RESOURCE_URI } from '../src/server/mcp.js';
@@ -128,42 +128,14 @@ test('MCAP indexed metadata, channels, counts, and nanosecond timestamps are pre
     await file.close();
   }
 });
-test('loopback API requires a capability, rejects foreign origins, and streams byte ranges', async () => {
-  const store = new ArtifactStore(await FileAccess.create([samples]));
-  const a = await store.inspect('video.mp4');
-  const http = await startHttp(store, resolve('dist/web'));
-  try {
-    assert.equal((await fetch(`${http.origin}/api/artifact/${a.id}`)).status, 401);
-    assert.equal(
-      (
-        await fetch(`${http.origin}/api/artifact/${a.id}`, {
-          headers: { Authorization: `Bearer ${http.token}`, Origin: 'https://evil.example' },
-        })
-      ).status,
-      403,
-    );
-    const range = await fetch(
-      `${http.origin}/api/file/${a.id}?token=${http.token}&revision=${encodeURIComponent(a.revision)}`,
-      { headers: { Range: 'bytes=0-15' } },
-    );
-    assert.equal(range.status, 206);
-    assert.equal(range.headers.get('content-length'), '16');
-    assert.equal((await range.arrayBuffer()).byteLength, 16);
-    const invalid = await fetch(
-      `${http.origin}/api/file/${a.id}?token=${http.token}&revision=${encodeURIComponent(a.revision)}`,
-      { headers: { Range: 'bytes=999999999-' } },
-    );
-    assert.equal(invalid.status, 416);
-    assert.equal(
-      (await fetch(`${http.origin}/api/file/${a.id}?token=${http.token}&revision=old`)).status,
-      409,
-    );
-    const html = await fetch(http.origin);
-    assert.equal(html.status, 200);
-    assert.match(html.headers.get('content-security-policy')!, /frame-ancestors 'none'/);
-  } finally {
-    await http.close();
-  }
+test('the former standalone viewer flag fails without printing a URL', () => {
+  const launched = spawnSync(process.execPath, [resolve('dist/server/index.js'), '--web'], {
+    encoding: 'utf8',
+    timeout: 3000,
+  });
+  assert.equal(launched.status, 1);
+  assert.equal(launched.stdout, '');
+  assert.match(launched.stderr, /Unknown option '--web'/);
 });
 test('real stdio MCP exposes tools, UI resource, byte reads, and shared selections', async () => {
   const transport = new StdioClientTransport({
@@ -175,16 +147,19 @@ test('real stdio MCP exposes tools, UI resource, byte reads, and shared selectio
   await client.connect(transport);
   try {
     assert.equal(client.getServerVersion()?.name, 'tesseract');
+    assert.equal(client.getServerVersion()?.title, 'Tesseract');
     const list = await client.listTools();
-    assert.ok(list.tools.some((t) => t.name === 'artifact_open'));
+    assert.deepEqual(list.tools.find((t) => t.name === 'artifact_open')?._meta?.ui, {
+      resourceUri: RESOURCE_URI,
+    });
     const opened = await client.callTool({
       name: 'artifact_open',
       arguments: { path: 'bracket.glb' },
     });
     assert.ok(!opened.isError);
-    const { artifact, viewerUrl } = opened.structuredContent as any;
+    const { artifact } = opened.structuredContent as any;
+    assert.deepEqual(Object.keys(opened.structuredContent ?? {}), ['artifact']);
     assert.equal(artifact.format.id, 'glb');
-    assert.match(viewerUrl, /^http:\/\/127\.0\.0\.1:/);
     assert.equal(RESOURCE_URI, 'ui://tesseract/viewer.html');
     const { resources } = await client.listResources();
     assert.deepEqual(

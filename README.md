@@ -37,20 +37,6 @@ You can also open a supported workspace file from Codex and select **Open with T
 
 Most decoded previews cap input at 64 MiB. Archives also cap expanded data at 64 MiB and 2,000 entries. GLB and glTF must contain their own buffers and textures. RAR and 7z have hexadecimal previews. E57 shows metadata, and the VTK viewer supports legacy POLYDATA and a subset of ASCII XML meshes.
 
-## Use Tesseract outside Codex
-
-From the extracted package, start Tesseract and open the local URL printed in the terminal:
-
-```sh
-node dist/server/index.js --web
-```
-
-The browser panel accepts files you pick or drop. To open a specific file from the terminal, pass its containing folder and filename:
-
-```sh
-node dist/server/index.js --web --root "/path/to/project" --file bracket.glb
-```
-
 ## Workspace access
 
 Files picked or dropped into the panel are read by the viewer. For indexed inspection and agent-visible selections, explicitly grant the server a workspace folder. From the extracted package, run the commands below, then reopen Codex.
@@ -60,7 +46,7 @@ node scripts/configure-plugin.mjs "/path/to/project"
 codex plugin add tesseract@tesseract-local
 ```
 
-Repeat the path argument to add more roots. The bundled configuration grants server-side access to the included samples. The browser server listens only on loopback and uses a per-process URL token. Archive previews run in memory.
+Repeat the path argument to add more roots. The bundled configuration grants server-side access to the included samples. Tesseract runs in the Codex side panel and communicates with its MCP server over standard input and output. Archive previews run in memory.
 
 ## Develop
 

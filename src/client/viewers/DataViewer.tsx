@@ -1,8 +1,8 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { ViewerProps } from '../../shared/types';
-import { embedded, embeddedParserWorker, readBytes } from '../backend';
+import { embeddedParserWorker, readBytes } from '../backend';
 import { Icon } from '../Icon';
-import DataWorker from './data.worker?worker';
+import dataWorkerUrl from './data.worker?worker&url';
 export default function DataViewer({ artifact, onSelect }: ViewerProps) {
   const [messages, setMessages] = useState<
     {
@@ -47,7 +47,7 @@ export default function DataViewer({ artifact, onSelect }: ViewerProps) {
     async function inspect() {
       const data = await readBytes(artifact, undefined, false, signal);
       signal.throwIfAborted();
-      const parser = embedded ? await embeddedParserWorker('data', signal) : new DataWorker();
+      const parser = await embeddedParserWorker(dataWorkerUrl, signal);
       if (signal.aborted) {
         parser.terminate();
         return;

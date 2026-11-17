@@ -45,11 +45,11 @@ async function open(page: Page, path: string) {
   const result = await client.callTool({ name: 'artifact_open', arguments: { path } });
   expect(result.isError).toBeFalsy();
   const data = result.structuredContent as any;
-  await page.goto(data.viewerUrl);
-  await expect(page.locator('.filename')).toHaveText(data.artifact.name);
+  const frame = await openEmbedded(page, { input: { path }, result });
+  await expect(frame.locator('.filename')).toHaveText(data.artifact.name);
   return data.artifact;
 }
-async function selectModel(view: Page | FrameLocator, heightFraction = 0.73) {
+async function selectModel(view: FrameLocator, heightFraction = 0.73) {
   const cube = view.getByRole('group', { name: 'View cube' });
   await cube.getByRole('button', { name: 'Front', exact: true }).click();
   await expect(cube.locator('.view-cube-face:visible')).toHaveCount(1);
@@ -60,12 +60,13 @@ async function selectModel(view: Page | FrameLocator, heightFraction = 0.73) {
 test('STL, GLB, OBJ, and PLY render, orbit, and return object selection to MCP', async ({
   page,
 }) => {
+  const frame = page.frameLocator('#app');
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   for (const path of ['bracket.stl', 'bracket.glb', 'bracket.obj', 'pyramid.ply']) {
     const artifact = await open(page, path);
-    await selectModel(page, path.endsWith('.ply') ? 0.5 : 0.73);
-    await expect(page.getByRole('status')).toContainText('available to agent');
+    await selectModel(frame, path.endsWith('.ply') ? 0.5 : 0.73);
+    await expect(frame.getByRole('status')).toContainText('available to agent');
     const selected = await client.callTool({
       name: 'artifact_get_selection',
       arguments: { artifactId: artifact.id },
@@ -84,10 +85,11 @@ test('STL, GLB, OBJ, and PLY render, orbit, and return object selection to MCP',
   await page.screenshot({ path: 'test-results/model.png' });
 });
 test('the view cube snaps to faces, edges, and corners and follows orbit', async ({ page }) => {
+  const frame = page.frameLocator('#app');
   const artifact = await open(page, 'bracket.stl');
   const args = { artifactId: artifact.id };
   const before = await client.callTool({ name: 'artifact_get_selection', arguments: args });
-  const cube = page.getByRole('group', { name: 'View cube' });
+  const cube = frame.getByRole('group', { name: 'View cube' });
   const visibleFaces = cube.locator('.view-cube-face:visible');
   for (const name of [
     'Open artifact',
@@ -97,7 +99,7 @@ test('the view cube snaps to faces, edges, and corners and follows orbit', async
     'Wireframe',
     'Objects',
   ]) {
-    await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+    await expect(frame.getByRole('button', { name, exact: true })).toHaveCount(0);
   }
   await cube.getByRole('button', { name: 'Front', exact: true }).click();
   await expect(visibleFaces).toHaveCount(1);
@@ -123,36 +125,38 @@ test('the view cube snaps to faces, edges, and corners and follows orbit', async
   expect(after.structuredContent).toEqual(before.structuredContent);
 });
 test('MCAP topics and timeline selection round-trip at nanosecond precision', async ({ page }) => {
+  const frame = page.frameLocator('#app');
   const artifact = await open(page, 'robot.mcap');
-  await expect(page.getByText('60 messages', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '/joint_states', exact: true }).click();
-  const slider = page.getByRole('slider', { name: 'Recording timeline' });
+  await expect(frame.getByText('60 messages', { exact: true })).toBeVisible();
+  await frame.getByRole('button', { name: '/joint_states', exact: true }).click();
+  const slider = frame.getByRole('slider', { name: 'Recording timeline' });
   await slider.fill('5000');
   await slider.dispatchEvent('change');
-  await expect(page.getByRole('status')).toContainText('1730000002950000000 ns');
+  await expect(frame.getByRole('status')).toContainText('1730000002950000000 ns');
   const result = await client.callTool({
     name: 'artifact_get_selection',
     arguments: { artifactId: artifact.id },
   });
   expect((result.structuredContent as any).selection.timestampNs).toBe('1730000002950000000');
   expect((result.structuredContent as any).selection.channelId).toBe(artifact.mcap.topics[0].id);
-  await page.getByText('Recording metadata', { exact: true }).click();
-  await expect(page.getByText(/demo-arm/)).toBeVisible();
+  await frame.getByText('Recording metadata', { exact: true }).click();
+  await expect(frame.getByText(/demo-arm/)).toBeVisible();
   await page.screenshot({ path: 'test-results/mcap.png' });
 });
 test('images, videos, text, and fallback open in the shared interface', async ({ page }) => {
+  const frame = page.frameLocator('#app');
   await page.setViewportSize({ width: 390, height: 820 });
   await open(page, 'diagram.svg');
-  const image = page.getByRole('img', { name: 'diagram.svg' });
+  const image = frame.getByRole('img', { name: 'diagram.svg' });
   await expect(image).toBeVisible();
   expect(await image.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(800);
-  const preview = (await page.locator('.media-stage').boundingBox())!;
-  const controls = (await page.getByRole('group', { name: 'Image controls' }).boundingBox())!;
+  const preview = (await frame.locator('.media-stage').boundingBox())!;
+  const controls = (await frame.getByRole('group', { name: 'Image controls' }).boundingBox())!;
   expect(controls.y).toBeGreaterThanOrEqual(preview.y + preview.height);
   await page.screenshot({ path: 'test-results/image-narrow.png' });
-  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await frame.getByRole('button', { name: 'Zoom in', exact: true }).click();
   await open(page, 'video.mp4');
-  const video = page.locator('video');
+  const video = frame.locator('video');
   await expect(video).toBeVisible();
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThan(0);
   await video.evaluate((v: HTMLVideoElement) => {
@@ -163,29 +167,31 @@ test('images, videos, text, and fallback open in the shared interface', async ({
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
     .toBeGreaterThan(0);
   await open(page, 'telemetry.json');
-  await expect(page.locator('pre')).toContainText('base_link');
+  await expect(frame.locator('pre')).toContainText('base_link');
   await page.screenshot({ path: 'test-results/text-narrow.png' });
   await open(page, 'unsupported.step');
-  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(frame.getByRole('alert')).toBeVisible();
 });
 test('malformed and oversized files fail gracefully and another file still opens', async ({
   page,
 }) => {
+  const frame = page.frameLocator('#app');
   await open(page, 'invalid.stl');
-  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(frame.getByRole('alert')).toBeVisible();
   await open(page, 'invalid.mcap');
-  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(frame.getByRole('alert')).toBeVisible();
   await open(page, resolve(temp, 'large.glb'));
-  await expect(page.getByRole('alert')).toContainText('64 MiB');
+  await expect(frame.getByRole('alert')).toContainText('64 MiB');
   await open(page, 'telemetry.json');
-  await expect(page.locator('pre')).toContainText('base_link');
+  await expect(frame.locator('pre')).toContainText('base_link');
 });
 test('file edits refresh without remounting unchanged models or preserving stale selections', async ({
   page,
 }) => {
+  const frame = page.frameLocator('#app');
   const artifact = await open(page, resolve(temp, 'refresh.stl'));
-  await selectModel(page);
-  await expect(page.getByRole('status')).toContainText('available to agent');
+  await selectModel(frame);
+  await expect(frame.getByRole('status')).toContainText('available to agent');
   await expect
     .poll(
       async () =>
@@ -198,13 +204,15 @@ test('file edits refresh without remounting unchanged models or preserving stale
     )
     .not.toEqual({ selection: null });
   await writeFile(resolve(temp, 'refresh.stl'), 'broken after edit');
-  await expect(page.getByRole('alert')).toBeVisible({ timeout: 10000 });
+  await expect(frame.getByRole('alert')).toBeVisible({ timeout: 10000 });
   const selection = await client.callTool({
     name: 'artifact_get_selection',
     arguments: { artifactId: artifact.id },
   });
   expect((selection.structuredContent as any).selection).toBeNull();
 });
+const boundPaths = new WeakMap<Page, string | undefined>();
+
 async function openEmbedded(
   page: Page,
   fixture: {
@@ -227,13 +235,14 @@ async function openEmbedded(
   });
   const bundle = (Array.isArray(output) ? output[0] : output) as any;
   const code = bundle.output[0].code;
-  await page.exposeFunction('callMcp', (params: any) =>
-    client.callTool(
-      fixture.boundFilePath
-        ? { ...params, _meta: { 'openai/resource': { path: fixture.boundFilePath } } }
-        : params,
-    ),
-  );
+  if (!boundPaths.has(page)) {
+    await page.exposeFunction('callMcp', (params: Parameters<Client['callTool']>[0]) => {
+      const path = boundPaths.get(page);
+      return client.callTool(path ? { ...params, _meta: { 'openai/resource': { path } } } : params);
+    });
+  }
+  boundPaths.set(page, fixture.boundFilePath);
+  await page.unroute('https://tesseract.test/**');
   await page.route('https://tesseract.test/**', async (route) => {
     if (new URL(route.request().url()).pathname === '/fixture')
       await route.fulfill({ json: { ...fixture, html: (resource.contents[0] as any).text } });
@@ -323,11 +332,12 @@ test('desktop file entrypoint renders the STL resource handed off by the host', 
 });
 
 test('PCD point clouds render and expose selected source coordinates to MCP', async ({ page }) => {
+  const frame = page.frameLocator('#app');
   const artifact = await open(page, 'scan.pcd');
-  await expect(page.locator('.dimensions')).toBeVisible();
-  await expect(page.getByRole('alert')).toHaveCount(0);
-  await selectModel(page, 0.5);
-  await expect(page.getByRole('status')).toContainText('available to agent');
+  await expect(frame.locator('.dimensions')).toBeVisible();
+  await expect(frame.getByRole('alert')).toHaveCount(0);
+  await selectModel(frame, 0.5);
+  await expect(frame.getByRole('status')).toContainText('available to agent');
   const result = await client.callTool({
     name: 'artifact_get_selection',
     arguments: { artifactId: artifact.id },
@@ -339,33 +349,36 @@ test('PCD point clouds render and expose selected source coordinates to MCP', as
 });
 
 test('folders and ZIP entries can be browsed and previewed', async ({ page }) => {
+  const frame = page.frameLocator('#app');
   await open(page, '.');
-  await page.getByRole('button', { name: 'telemetry.json', exact: true }).click();
-  await expect(page.locator('pre')).toContainText('base_link');
+  await frame.getByRole('button', { name: 'telemetry.json', exact: true }).click();
+  await expect(frame.locator('pre')).toContainText('base_link');
   await page.setViewportSize({ width: 390, height: 820 });
   await open(page, resolve(temp, 'bundle.zip'));
-  const filter = page.getByRole('searchbox', { name: 'Filter entries' });
+  const filter = frame.getByRole('searchbox', { name: 'Filter entries' });
   await filter.fill('missing');
-  await expect(page.getByText('No matching files')).toBeVisible();
+  await expect(frame.getByText('No matching files')).toBeVisible();
   await filter.fill('readme');
-  const entry = page.getByRole('button', { name: 'nested/readme.txt', exact: true });
+  const entry = frame.getByRole('button', { name: 'nested/readme.txt', exact: true });
   await entry.click();
   await expect(entry).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('pre')).toContainText('archive contents');
-  const list = (await page.getByRole('complementary', { name: 'Files' }).boundingBox())!;
-  const preview = (await page.locator('pre').boundingBox())!;
+  await expect(frame.locator('pre')).toContainText('archive contents');
+  const list = (await frame.getByRole('complementary', { name: 'Files' }).boundingBox())!;
+  const preview = (await frame.locator('pre').boundingBox())!;
   expect(preview.y).toBeGreaterThanOrEqual(list.y + list.height);
   expect(preview.width).toBeGreaterThan(340);
   await page.screenshot({ path: 'test-results/archive-narrow.png' });
 });
 test('STEP tessellation renders using the bundled CAD decoder', async ({ page }) => {
+  const frame = page.frameLocator('#app');
   for (const name of ['part.step', 'part.iges']) {
     await open(page, resolve(temp, name));
-    await expect(page.locator('.dimensions')).toBeVisible({ timeout: 25000 });
-    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(frame.locator('.dimensions')).toBeVisible({ timeout: 25000 });
+    await expect(frame.getByRole('alert')).toHaveCount(0);
   }
 });
 test('scientific data and ROS message readers inspect real fixtures', async ({ page }) => {
+  const frame = page.frameLocator('#app');
   for (const [path, expected] of [
     ['array.npy', 'row-major'],
     ['datasets.h5', 'temperature'],
@@ -374,27 +387,29 @@ test('scientific data and ROS message readers inspect real fixtures', async ({ p
     ['telemetry.bag', '/temperature'],
   ]) {
     await open(page, `scientific/${path}`);
-    await expect(page.locator('pre').first()).toContainText(expected, { timeout: 25000 });
-    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(frame.locator('pre').first()).toContainText(expected, { timeout: 25000 });
+    await expect(frame.getByRole('alert')).toHaveCount(0);
   }
 });
 test('LAS, compressed LAZ and VTK meshes render', async ({ page }) => {
+  const frame = page.frameLocator('#app');
   for (const name of ['points.las', 'points.laz', 'surface.vtk', 'surface.vtp']) {
     await open(page, `scientific/${name}`);
-    await expect(page.locator('.dimensions')).toBeVisible({ timeout: 25000 });
-    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(frame.locator('.dimensions')).toBeVisible({ timeout: 25000 });
+    await expect(frame.getByRole('alert')).toHaveCount(0);
   }
 });
 test('MCAP JSON messages are decoded on demand', async ({ page }) => {
+  const frame = page.frameLocator('#app');
   await open(page, 'robot.mcap');
-  await page.getByRole('button', { name: 'Decoded message preview' }).click();
-  await expect(page.locator('.text-view pre').first()).toContainText('frame');
-  await page.getByRole('button', { name: 'Play preview' }).click();
-  await expect(page.getByRole('slider', { name: 'Message preview index' })).not.toHaveValue('0');
-  await page.getByRole('button', { name: 'Pause preview' }).click();
-  await page.getByRole('button', { name: 'Select message timestamp' }).click();
-  await expect(page.getByRole('status')).toContainText('available to agent');
-  await page.locator('.message-view').scrollIntoViewIfNeeded();
+  await frame.getByRole('button', { name: 'Decoded message preview' }).click();
+  await expect(frame.locator('.text-view pre').first()).toContainText('frame');
+  await frame.getByRole('button', { name: 'Play preview' }).click();
+  await expect(frame.getByRole('slider', { name: 'Message preview index' })).not.toHaveValue('0');
+  await frame.getByRole('button', { name: 'Pause preview' }).click();
+  await frame.getByRole('button', { name: 'Select message timestamp' }).click();
+  await expect(frame.getByRole('status')).toContainText('available to agent');
+  await frame.locator('.message-view').scrollIntoViewIfNeeded();
   await page.screenshot({ path: 'test-results/messages.png' });
 });
 for (const name of ['robot.mcap', 'pyramid.ply'])
@@ -616,7 +631,7 @@ test('native panel shares timestamps from a narrow side panel', async ({ page })
   await page.screenshot({ path: 'test-results/native-camera-narrow-light.png' });
 });
 
-async function checkCameraPlayback(view: Page | FrameLocator) {
+async function checkCameraPlayback(view: FrameLocator) {
   const canvas = view.getByLabel('Recorded camera video');
   await expect(canvas).toHaveAttribute('data-frame-timestamp-ns', '42000000000');
   const fingerprint = () =>
@@ -654,11 +669,12 @@ async function checkCameraPlayback(view: Page | FrameLocator) {
   await expect(view.getByRole('alert')).toHaveCount(0);
 }
 
-test('camera video plays, pauses, seeks and switches cameras in the local viewer', async ({
+test('camera video plays, pauses, seeks and switches cameras for an indexed workspace file', async ({
   page,
 }) => {
+  const frame = page.frameLocator('#app');
   const artifact = await open(page, resolve(temp, 'cameras.mcap'));
-  await checkCameraPlayback(page);
+  await checkCameraPlayback(frame);
   const result = await client.callTool({
     name: 'artifact_get_selection',
     arguments: { artifactId: artifact.id },
@@ -671,10 +687,11 @@ test('camera video plays, pauses, seeks and switches cameras in the local viewer
 });
 
 test('camera video reports when the host has no WebCodecs decoder', async ({ page }) => {
+  const frame = page.frameLocator('#app');
   await page.addInitScript(() => {
     Object.defineProperty(window, 'VideoDecoder', { value: undefined });
   });
   await open(page, resolve(temp, 'cameras.mcap'));
-  await expect(page.getByRole('alert')).toContainText('does not expose WebCodecs');
-  await expect(page.getByRole('button', { name: 'Play recording', exact: true })).toBeDisabled();
+  await expect(frame.getByRole('alert')).toContainText('does not expose WebCodecs');
+  await expect(frame.getByRole('button', { name: 'Play recording', exact: true })).toBeDisabled();
 });

@@ -2,10 +2,10 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 
-export default defineConfig(({ mode }) => ({
-  plugins: [react(), ...(mode === 'embedded' ? [viteSingleFile()] : [])],
+export default defineConfig({
+  plugins: [react(), viteSingleFile()],
   build: {
-    outDir: mode === 'embedded' ? 'dist/embedded' : 'dist/web',
+    outDir: 'dist/embedded',
     target: 'es2022',
     assetsInlineLimit: 10 * 1024 * 1024,
     chunkSizeWarningLimit: 1800,
@@ -17,8 +17,8 @@ export default defineConfig(({ mode }) => ({
       output: {
         inlineDynamicImports: true,
         // The MCP server serves the larger parser workers on demand.
-        ...(mode === 'embedded' ? { entryFileNames: '[name].js' } : {}),
+        entryFileNames: '[name].js',
       },
     },
   },
-}));
+});

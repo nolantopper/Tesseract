@@ -1,6 +1,6 @@
 {
   "name": "tesseract",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "vite build && vite build --mode embedded && tsc -p tsconfig.server.json",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && vite build && tsc -p tsconfig.server.json",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "start": "node dist/server/index.js",
     "dev": "tsx src/server/index.ts",
