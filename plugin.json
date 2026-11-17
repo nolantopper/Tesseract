@@ -1,0 +1,27 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "tesseract",
+  "version": "0.4.1",
+  "license": "MIT",
+  "description": "Preview local 3D models, archives, scientific files, media, and robotics recordings beside your Codex chat.",
+  "keywords": ["artifacts", "3d", "mcap", "viewer"],
+  "extensions": {
+    "com.openai": {
+      "requires_local_executor": true,
+      "interface": {
+        "displayName": "Tesseract",
+        "shortDescription": "Preview local files beside your chat",
+        "longDescription": "Inspect 3D and CAD models, browse archives, play media, and explore MCAP recordings. Choose a file from your computer in the Tesseract panel.",
+        "category": "Developer Tools",
+        "brandColor": "#27384B",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png",
+        "defaultPrompt": [
+          "Open Tesseract so I can choose a file.",
+          "Preview the bundled bearing bracket."
+        ],
+        "capabilities": ["Read", "Interactive"]
+      }
+    }
+  }
+}
