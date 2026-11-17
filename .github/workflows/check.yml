@@ -14,5 +14,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run release
       - run: npm test
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:browser
+      - name: Run browser tests in Google Chrome
+        run: npm run test:browser
+        env:
+          CHROMIUM_PATH: /usr/bin/google-chrome
