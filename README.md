@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" alt="Tesseract logo" width="64" height="64" align="right">
+
 # Tesseract
 
 Preview local 3D models, archives, media, and robotics recordings beside your Codex chat. Orbit a model, browse a ZIP, or flag a moment in an MCAP recording.
