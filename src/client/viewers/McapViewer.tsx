@@ -91,16 +91,16 @@ export default function McapViewer({ artifact, onSelect }: ViewerProps) {
           </thead>
           <tbody>
             {info.topics.map((topic) => (
-              <tr key={topic.id} className={channel === topic.id ? 'selected' : ''}>
+              <tr
+                key={topic.id}
+                className={channel === topic.id ? 'selected' : ''}
+                onClick={() => {
+                  setChannel(topic.id);
+                  choose(position, topic.id);
+                }}
+              >
                 <td>
-                  <button
-                    className="topic-button"
-                    aria-pressed={channel === topic.id}
-                    onClick={() => {
-                      setChannel(topic.id);
-                      choose(position, topic.id);
-                    }}
-                  >
+                  <button className="topic-button" aria-pressed={channel === topic.id}>
                     {topic.topic}
                   </button>
                 </td>

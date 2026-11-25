@@ -128,7 +128,13 @@ test('MCAP topics and timeline selection round-trip at nanosecond precision', as
   const frame = page.frameLocator('#app');
   const artifact = await open(page, 'robot.mcap');
   await expect(frame.getByText('60 messages', { exact: true })).toBeVisible();
-  await frame.getByRole('button', { name: '/joint_states', exact: true }).click();
+  const temperature = frame.getByRole('button', { name: '/telemetry/temperature', exact: true });
+  await temperature.press('Space');
+  await expect(temperature).toHaveAttribute('aria-pressed', 'true');
+  const joints = frame.getByRole('row').filter({ hasText: '/joint_states' });
+  await joints.getByRole('cell').last().click({ position: { x: 3, y: 3 } });
+  await expect(joints.getByRole('button')).toHaveAttribute('aria-pressed', 'true');
+  await expect(temperature).toHaveAttribute('aria-pressed', 'false');
   const slider = frame.getByRole('slider', { name: 'Recording timeline' });
   await slider.fill('5000');
   await slider.dispatchEvent('change');

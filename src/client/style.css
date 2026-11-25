@@ -459,6 +459,10 @@ td[title] {
   padding: 5px 6px;
   margin: -5px -6px;
 }
+.topic-scroll tbody tr {
+  cursor: pointer;
+}
+.topic-scroll tbody tr:hover td,
 .selected td {
   background: var(--hover);
 }
