@@ -17,11 +17,15 @@ const paths = {
     </>
   ),
   check: <path d="m4.5 10 3.5 3.5 7.5-7.5" />,
+  edit: (
+    <path d="m11.7 4.6 3.7 3.7M3.5 16.5l.9-4 9.3-9.3a1.4 1.4 0 0 1 2 0l1.1 1.1a1.4 1.4 0 0 1 0 2l-9.3 9.3-4 .9Z" />
+  ),
+  download: <path d="M10 3v9m-3.5-3.5L10 12l3.5-3.5M4 12.5V16h12v-3.5" />,
   expand: <path d="M7 3H3v4m10-4h4v4m0 6v4h-4m-6 0H3v-4" />,
+  collapse: <path d="M3 7h4V3m6 0v4h4m0 6h-4v4m-6 0v-4H3" />,
   close: <path d="m5 5 10 10M15 5 5 15" />,
   play: <path d="m7 4 9 6-9 6Z" />,
   pause: <path d="M7 4v12m6-12v12" />,
-  flag: <path d="M4 17V3m0 1c4-3 8 3 12 0v8c-4 3-8-3-12 0" />,
   chevron: <path d="m8 5 5 5-5 5" />,
   minus: <path d="M4 10h12" />,
   plus: <path d="M4 10h12m-6-6v12" />,

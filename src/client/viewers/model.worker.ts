@@ -1,5 +1,6 @@
 import {
   BufferGeometry,
+  Color,
   Float32BufferAttribute,
   Mesh,
   Points,
@@ -15,19 +16,51 @@ import { VTKLoader } from 'three/examples/jsm/loaders/VTKLoader.js';
 import { parseVtkXml } from './vtk-xml';
 import { parseLas, parseLaz } from './las';
 import { parsePcd } from './pcd';
+import { parseUsd } from './usd';
+import { parseSimulation } from './simulation';
+import { objectFromParts, partsFromObject, disposeModel, type Part } from './model-parts';
+import type { Joint } from './model-joints';
+import { repaintStepFace, type StepFacePaint } from './step-edits';
 
-export interface Part {
-  name: string;
-  points: boolean;
-  attributes: Record<string, { array: Float32Array; itemSize: number }>;
-  index?: Uint16Array | Uint32Array;
+export type { Part } from './model-parts';
+let nextRequest = 0;
+const pending = new Map<number, { resolve: (data: any) => void; reject: (error: Error) => void }>();
+function request(type: 'asset' | 'mesh', params: Record<string, unknown>): Promise<any> {
+  const requestId = ++nextRequest;
+  return new Promise((resolve, reject) => {
+    pending.set(requestId, { resolve, reject });
+    self.postMessage({ type, requestId, ...params });
+  });
 }
 self.onmessage = async (
-  event: MessageEvent<{ format: string; data: ArrayBuffer; wasm?: ArrayBuffer }>,
+  event: MessageEvent<{
+    format: string;
+    name?: string;
+    data: ArrayBuffer;
+    wasm?: ArrayBuffer;
+    stepPaint?: StepFacePaint;
+    requestId?: number;
+    error?: string;
+    parts?: Part[];
+  }>,
 ) => {
+  if (event.data.requestId !== undefined) {
+    const callback = pending.get(event.data.requestId);
+    pending.delete(event.data.requestId);
+    if (event.data.error) callback?.reject(new Error(event.data.error));
+    else callback?.resolve(event.data.parts ?? event.data.data);
+    return;
+  }
   try {
     const { format, data } = event.data;
+    if (format === 'step' && event.data.stepPaint) {
+      const cad = await initCad({ wasmBinary: event.data.wasm! });
+      const bytes = repaintStepFace(new Uint8Array(data), event.data.stepPaint, cad.ReadStepFile);
+      self.postMessage({ bytes }, { transfer: [bytes] });
+      return;
+    }
     const parts: Part[] = [];
+    let joints: Joint[] = [];
     const transfer: ArrayBuffer[] = [];
     const add = (geometry: BufferGeometry, name: string, points = false) => {
       const positions = geometry.getAttribute('position');
@@ -48,14 +81,49 @@ self.onmessage = async (
         transfer.push(part.index.buffer as ArrayBuffer);
       }
       parts.push(part);
+      return part;
     };
-    if (format === 'stl') add(new STLLoader().parse(data), 'Mesh');
-    else if (format === 'step' || format === 'iges') {
+    if (['usd', 'usda', 'usdc', 'usdz', 'urdf', 'sdf', 'mjcf'].includes(format)) {
+      const loadAsset = (path: string): Promise<ArrayBuffer> => request('asset', { path });
+      const loadMesh = async (
+        bytes: ArrayBuffer,
+        extension: string,
+        path?: string,
+      ): Promise<Object3D> => {
+        if (extension === 'stl') return new Mesh(new STLLoader().parse(bytes));
+        if (extension === 'obj') return new OBJLoader().parse(new TextDecoder().decode(bytes));
+        if (extension === 'ply') return new Mesh(new PLYLoader().parse(bytes));
+        if (['glb', 'gltf', 'dae'].includes(extension)) {
+          const result = await request('mesh', { data: bytes, format: extension, path });
+          return objectFromParts(result);
+        }
+        throw new Error(
+          `Unsupported linked mesh format: ${extension}. Use STL, OBJ, PLY, DAE, or glTF.`,
+        );
+      };
+      const parsed = format.startsWith('usd')
+        ? await parseUsd(data, loadAsset, event.data.name)
+        : await parseSimulation(data, format as 'urdf' | 'sdf' | 'mjcf', loadAsset, loadMesh).then(
+            (model) => {
+              joints = model.joints;
+              return model;
+            },
+          );
+      try {
+        parts.push(...partsFromObject(parsed.object));
+      } finally {
+        disposeModel(parsed.object);
+      }
+    } else if (format === 'stl') add(new STLLoader().parse(data), 'Mesh');
+    else if (format === 'step' || format === 'iges' || format === 'brep') {
       const cad = await initCad({ wasmBinary: event.data.wasm! });
+      const bytes = new Uint8Array(data);
       const result =
         format === 'step'
-          ? cad.ReadStepFile(new Uint8Array(data), null)
-          : cad.ReadIgesFile(new Uint8Array(data), null);
+          ? cad.ReadStepFile(bytes, null)
+          : format === 'iges'
+            ? cad.ReadIgesFile(bytes, null)
+            : cad.ReadBrepFile(bytes, null);
       if (!result.success) throw new Error('Cannot tessellate CAD file.');
       let vertices = 0;
       for (const mesh of result.meshes) {
@@ -72,7 +140,49 @@ self.onmessage = async (
             new Float32BufferAttribute(mesh.attributes.normal.array, 3),
           );
         geometry.setIndex(mesh.index.array);
-        add(geometry, mesh.name || 'CAD part');
+        const part = add(geometry, mesh.name || 'CAD part');
+        part.surfaces = mesh.brep_faces?.map(({ first, last }) => ({ first, last }));
+        const faces = mesh.brep_faces ?? [];
+        const hasFaceColors = faces.some(({ color }) => color !== undefined);
+        if (mesh.color || hasFaceColors) {
+          const material = (color: [number, number, number]) => ({
+            color,
+            opacity: 1,
+            metalness: 0.12,
+            roughness: 0.48,
+          });
+          const neutral = new Color(0x94a8bb);
+          part.materials = [material(mesh.color ?? [neutral.r, neutral.g, neutral.b])];
+          if (hasFaceColors) {
+            const groups: NonNullable<Part['groups']> = [];
+            part.groups = groups;
+            const indices = new Map([[part.materials[0].color.join(','), 0]]);
+            let offset = 0;
+            const group = (start: number, end: number, materialIndex: number) => {
+              if (end <= start) return;
+              const previous = groups.at(-1);
+              if (previous?.materialIndex === materialIndex) previous.count += end - start;
+              else groups.push({ start, count: end - start, materialIndex });
+            };
+            for (const { first, last, color } of faces) {
+              if (!color) continue;
+              const start = first * 3;
+              const end = (last + 1) * 3;
+              if (start < offset || end <= start || end > mesh.index.array.length) continue;
+              const key = color.join(',');
+              let materialIndex = indices.get(key);
+              if (materialIndex === undefined) {
+                materialIndex = part.materials.length;
+                indices.set(key, materialIndex);
+                part.materials.push(material(color));
+              }
+              group(offset, start, 0);
+              group(start, end, materialIndex);
+              offset = end;
+            }
+            group(offset, mesh.index.array.length, 0);
+          }
+        }
       }
     } else if (format === 'laz')
       add(await parseLaz(data, event.data.wasm!), 'LAZ point cloud', true);
@@ -106,7 +216,13 @@ self.onmessage = async (
       });
     } else throw new Error('Unsupported model parser.');
     if (!parts.length) throw new Error('No renderable geometry found.');
-    self.postMessage({ parts }, { transfer });
+    if (!transfer.length)
+      for (const part of parts) {
+        for (const attribute of Object.values(part.attributes))
+          transfer.push(attribute.array.buffer as ArrayBuffer);
+        if (part.index) transfer.push(part.index.buffer as ArrayBuffer);
+      }
+    self.postMessage({ parts, joints }, { transfer });
   } catch (error) {
     self.postMessage({ error: error instanceof Error ? error.message : 'Malformed model.' });
   }

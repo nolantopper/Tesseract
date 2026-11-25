@@ -1,4 +1,4 @@
-import { McapIndexedReader } from '@mcap/core';
+import { McapIndexedReader, type IReadable } from '@mcap/core';
 import { createFileRegistry, fromBinary } from '@bufbuild/protobuf';
 import { FileDescriptorSetSchema } from '@bufbuild/protobuf/wkt';
 import { Decompress } from 'fzstd';
@@ -195,16 +195,33 @@ export function h264Configuration(sps: Uint8Array) {
   };
 }
 
-export async function videoRecording(data: Uint8Array) {
-  if (data.length > videoLimits.input) throw new Error('MCAP video input limit is 64 MiB.');
+export async function videoRecording(source: Uint8Array | IReadable) {
+  if (source instanceof Uint8Array && source.length > videoLimits.input)
+    throw new Error('MCAP video input limit is 64 MiB.');
+  const readable: IReadable =
+    source instanceof Uint8Array
+      ? {
+          size: async () => BigInt(source.length),
+          read: async (offset, length) => source.subarray(Number(offset), Number(offset + length)),
+        }
+      : source;
+  const fileSize = await readable.size();
+  let remaining = videoLimits.input;
   let expanded = 0;
   const reader = await McapIndexedReader.Initialize({
     readable: {
-      size: async () => BigInt(data.length),
+      size: async () => fileSize,
       read: async (o, n) => {
-        if (o < 0n || n < 0n || o + n > BigInt(data.length) || n > BigInt(videoLimits.chunk))
+        if (
+          o < 0n ||
+          n < 0n ||
+          o + n > fileSize ||
+          n > BigInt(videoLimits.chunk) ||
+          n > BigInt(remaining)
+        )
           throw new Error('MCAP video read exceeds limits.');
-        return data.subarray(Number(o), Number(o + n));
+        remaining -= Number(n);
+        return readable.read(o, n);
       },
     },
     decompressHandlers: {
@@ -215,13 +232,8 @@ export async function videoRecording(data: Uint8Array) {
       },
     },
   });
-  if (
-    !reader.statistics ||
-    reader.statistics.messageEndTime - reader.statistics.messageStartTime > 21600000000000n
-  )
-    throw new Error(
-      'Video preview requires indexed statistics and a recording no longer than six hours.',
-    );
+  const stats = reader.statistics;
+  if (!stats) throw new Error('Video preview requires indexed statistics.');
   const cameras: Camera[] = [];
   for (const c of reader.channelsById.values())
     if (
@@ -232,11 +244,18 @@ export async function videoRecording(data: Uint8Array) {
   if (cameras.length > 64) throw new Error('MCAP camera count exceeds 64.');
   return {
     cameras,
-    async stream(id: number): Promise<CameraStream> {
+    async stream(id: number, window?: { start: bigint; end: bigint }): Promise<CameraStream> {
+      if (!window && stats.messageEndTime - stats.messageStartTime > 21600000000000n)
+        throw new Error('Set a shorter review range for recordings longer than six hours.');
+      // Include preceding keyframes so a range can start between them.
+      const startingAt = window ? window.start - 30000000000n : stats.messageStartTime;
+      const endingAt = window?.end ?? stats.messageEndTime;
       expanded = 0;
+      remaining = videoLimits.input;
       const camera = cameras.find((c) => c.id === id);
       if (!camera) throw new Error('Unknown MCAP camera channel.');
       for (const c of reader.chunkIndexes) {
+        if (c.messageEndTime < startingAt || c.messageStartTime > endingAt) continue;
         if (c.uncompressedSize > BigInt(videoLimits.chunk))
           throw new Error('MCAP expanded chunk exceeds 32 MiB.');
         if (c.compression && c.compression !== 'zstd')
@@ -259,13 +278,12 @@ export async function videoRecording(data: Uint8Array) {
         sinceKey = 0;
       for await (const message of reader.readMessages({
         topics: [camera.topic],
+        startingAt: startingAt < stats.messageStartTime ? stats.messageStartTime : startingAt,
+        endingAt,
         validateCrcs: true,
       })) {
         if (message.channelId !== id) continue;
-        if (
-          message.logTime < reader.statistics!.messageStartTime ||
-          message.logTime > reader.statistics!.messageEndTime
-        )
+        if (message.logTime < stats.messageStartTime || message.logTime > stats.messageEndTime)
           throw new Error('Video frame timestamp is outside the recording.');
         if (message.data.length > 4 * 1024 * 1024)
           throw new Error('Video access unit exceeds 4 MiB.');
@@ -288,16 +306,16 @@ export async function videoRecording(data: Uint8Array) {
           if (kind === 8) pps = nal.slice();
           if (kind === 5) key = true;
         }
+        // A clipped recording may begin between keyframes.
+        if (!samples.length && !key) continue;
         if (!sps || !pps) throw new Error('H.264 playback requires SPS and PPS parameter sets.');
         const next = h264Configuration(sps);
         if (config && JSON.stringify(config) !== JSON.stringify(next))
           throw new Error('H.264 configuration changes within a camera stream are unsupported.');
         config = next;
         if (key) sinceKey = 0;
-        else if (!samples.length || ++sinceKey > videoLimits.gop)
-          throw new Error(
-            'H.264 requires an initial keyframe and a keyframe at least every 600 frames.',
-          );
+        else if (++sinceKey > videoLimits.gop)
+          throw new Error('H.264 requires a keyframe at least every 600 frames.');
         let bytes = value.data.slice();
         if (key && (!nals.some((n) => (n[0] & 31) === 7) || !nals.some((n) => (n[0] & 31) === 8))) {
           bytes = new Uint8Array(8 + sps.length + pps.length + value.data.length);

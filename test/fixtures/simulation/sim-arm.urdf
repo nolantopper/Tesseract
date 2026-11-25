@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<robot name="Workshop arm">
+  <material name="base-blue"><color rgba="0.18 0.4 0.7 1"/></material>
+  <material name="arm-orange"><color rgba="0.9 0.45 0.12 1"/></material>
+  <material name="tool-grey"><color rgba="0.6 0.65 0.7 1"/></material>
+  <link name="Base">
+    <visual name="Pedestal"><geometry><box size="1.5 1.0 0.3"/></geometry><material name="base-blue"/></visual>
+  </link>
+  <link name="Shoulder">
+    <visual name="Upright"><origin xyz="0 0 0.65"/><geometry><box size="0.35 0.35 1.3"/></geometry><material name="arm-orange"/></visual>
+  </link>
+  <link name="Forearm">
+    <visual name="Beam"><origin xyz="0.65 0 0"/><geometry><box size="1.3 0.3 0.3"/></geometry><material name="arm-orange"/></visual>
+  </link>
+  <link name="Tool">
+    <visual name="Gripper"><geometry><sphere radius="0.23"/></geometry><material name="tool-grey"/></visual>
+  </link>
+  <joint name="Base joint" type="revolute"><parent link="Base"/><child link="Shoulder"/><origin xyz="0 0 0.15"/><axis xyz="0 0 1"/><limit lower="-3.14" upper="3.14" effort="10" velocity="1"/></joint>
+  <joint name="Elbow joint" type="revolute"><parent link="Shoulder"/><child link="Forearm"/><origin xyz="0 0 1.3"/><axis xyz="0 1 0"/><limit lower="-1.57" upper="1.57" effort="10" velocity="1"/></joint>
+  <joint name="Tool mount" type="fixed"><parent link="Forearm"/><child link="Tool"/><origin xyz="1.3 0 0"/></joint>
+</robot>

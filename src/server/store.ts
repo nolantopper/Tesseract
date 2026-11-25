@@ -1,9 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
+import type { Stats } from 'node:fs';
 import { detectFormat } from '../shared/formats.js';
 import type { Artifact, Selection } from '../shared/types.js';
+import { selectionKey } from '../shared/view.js';
 import { FileAccess } from './files.js';
 import { inspectMcap } from './mcap.js';
+
+function fileRevision(stat: Stats) {
+  return `${stat.ino}-${stat.size}-${stat.mtimeMs}-${stat.ctimeMs}`;
+}
 
 export class ArtifactStore {
   readonly artifacts = new Map<string, Artifact>();
@@ -20,7 +26,7 @@ export class ArtifactStore {
         name: basename(directory.path),
         size: 0,
         modified: directory.info.mtimeMs,
-        revision: JSON.stringify(directory.entries),
+        revision: createHash('sha256').update(JSON.stringify(directory.entries)).digest('hex'),
         format: {
           id: 'folder',
           label: 'Folder',
@@ -40,7 +46,7 @@ export class ArtifactStore {
     }
     const file = await this.files.open(input);
     try {
-      const revision = `${file.stat.ino}-${file.stat.size}-${file.stat.mtimeMs}-${file.stat.ctimeMs}`;
+      const revision = fileRevision(file.stat);
       const existing = [...this.artifacts.values()].find((a) => a.path === file.path);
       if (existing?.revision === revision) return existing;
       const head = Buffer.alloc(Math.min(512, file.stat.size));
@@ -92,8 +98,12 @@ export class ArtifactStore {
       throw new Error('Invalid byte range (maximum 1 MiB).');
     const file = await this.files.open(a.path);
     try {
+      if (fileRevision(file.stat) !== revision)
+        throw new Error('Artifact changed. Refresh the viewer.');
       const data = Buffer.alloc(Math.min(length, a.size - offset));
       const { bytesRead } = await file.handle.read(data, 0, data.length, offset);
+      if (fileRevision(await file.handle.stat()) !== revision)
+        throw new Error('Artifact changed. Refresh the viewer.');
       return data.subarray(0, bytesRead);
     } finally {
       await file.handle.close();
@@ -105,6 +115,11 @@ export class ArtifactStore {
       throw new Error('Selection belongs to an older artifact revision.');
     if (selection.kind === 'object' && a.format.kind !== 'model')
       throw new Error('Object selection requires a model.');
+    if (selection.parts) {
+      const ids = new Set(selection.parts.map(selectionKey));
+      if (selection.kind !== 'object' || ids.size !== selection.parts.length)
+        throw new Error('Select distinct parts of a model.');
+    }
     if (selection.kind === 'time') {
       if (!a.mcap || selection.timestampNs === undefined)
         throw new Error('Time selection requires an MCAP recording.');
@@ -121,5 +136,12 @@ export class ArtifactStore {
     this.selections.set(a.id, canonical);
     this.latestId = a.id;
     return canonical;
+  }
+
+  async clearSelection(artifactId: string, revision: string) {
+    const artifact = await this.get(artifactId);
+    if (artifact.revision !== revision)
+      throw new Error('Selection belongs to an older artifact revision.');
+    this.selections.delete(artifact.id);
   }
 }

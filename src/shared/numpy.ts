@@ -1,4 +1,6 @@
-export function inspectNpy(data: ArrayBuffer) {
+import { writeNumericEdit } from './numeric-edit.js';
+
+function npyLayout(data: ArrayBuffer) {
   const bytes = new Uint8Array(data),
     view = new DataView(data);
   if (
@@ -41,9 +43,38 @@ export function inspectNpy(data: ArrayBuffer) {
     order === '<' ||
     order === '|' ||
     (order === '=' && new Uint8Array(new Uint16Array([1]).buffer)[0] === 1);
+  return {
+    view,
+    start: offset + length,
+    size,
+    dtype,
+    count,
+    little,
+    type,
+    order,
+    shape,
+    storage: /['"]fortran_order['"]\s*:\s*True/.test(header) ? 'column-major' : 'row-major',
+  };
+}
+
+export function editableNpyDtype(dtype: string) {
+  return /^(?:[<>=|][iub]1|[<>=](?:[iu][248]|f[48]))$/.test(dtype);
+}
+
+export function editNpyValue(data: ArrayBuffer, index: number, value: string) {
+  const { view, start, size, count, little, type, dtype } = npyLayout(data);
+  if (!Number.isSafeInteger(index) || index < 0 || index >= count)
+    throw new Error('Choose an element in this array.');
+  if (!editableNpyDtype(dtype)) throw new Error('This NumPy dtype cannot be edited.');
+  writeNumericEdit(view, start + index * size, type, size, little, value);
+  return data;
+}
+
+export function inspectNpy(data: ArrayBuffer) {
+  const { view, start, size, dtype, count, little, type, shape, storage } = npyLayout(data);
   const values: (string | number)[] = [];
   for (let i = 0; i < Math.min(count, 10000); i++) {
-    const at = offset + length + i * size;
+    const at = start + i * size;
     values.push(
       type === 'f'
         ? size === 4
@@ -67,7 +98,7 @@ export function inspectNpy(data: ArrayBuffer) {
   return {
     dtype,
     shape,
-    storage: /['"]fortran_order['"]\s*:\s*True/.test(header) ? 'column-major' : 'row-major',
+    storage,
     count,
     preview: values,
     truncated: count > values.length,

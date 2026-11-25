@@ -1,0 +1,24 @@
+.media-view .image-controls {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.media-trim {
+  display: grid;
+  gap: 6px;
+}
+.media-trim label {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 54px;
+  gap: 8px;
+  align-items: center;
+}
+.media-trim output {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.media-trim-actions {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}

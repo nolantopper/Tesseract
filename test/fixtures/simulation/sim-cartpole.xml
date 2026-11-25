@@ -1,0 +1,16 @@
+<mujoco model="Cartpole">
+  <compiler angle="degree"/>
+  <default><geom rgba="0.6 0.65 0.7 1"/></default>
+  <worldbody>
+    <geom name="Track" type="box" size="2.2 0.15 0.08" pos="0 0 0" rgba="0.25 0.3 0.35 1"/>
+    <body name="Cart" pos="0 0 0.3">
+      <joint name="Slider" type="slide" axis="1 0 0"/>
+      <geom name="Cart body" type="box" size="0.45 0.3 0.2" rgba="0.2 0.45 0.75 1"/>
+      <body name="Pole" pos="0 0 0.2" euler="0 15 0">
+        <joint name="Hinge" type="hinge" axis="0 1 0"/>
+        <geom name="Pole shaft" type="capsule" size="0.07" fromto="0 0 0 0 0 1.7" rgba="0.9 0.45 0.12 1"/>
+        <geom name="Pole tip" type="sphere" size="0.14" pos="0 0 1.7" rgba="0.8 0.2 0.15 1"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

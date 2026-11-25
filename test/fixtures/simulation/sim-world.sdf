@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <world name="Workshop">
+    <model name="Floor">
+      <static>true</static>
+      <link name="Ground"><visual name="Surface"><geometry><box><size>5 4 0.1</size></box></geometry><material><diffuse>0.25 0.3 0.34 1</diffuse></material></visual></link>
+    </model>
+    <model name="Obstacle">
+      <pose>-1.1 0 0.5 0 0 0.2</pose>
+      <link name="Crate"><visual name="Box"><geometry><box><size>0.8 0.8 1</size></box></geometry><material><diffuse>0.2 0.5 0.8 1</diffuse></material></visual></link>
+    </model>
+    <model name="Target">
+      <pose>1 0 0.5 0 0 0</pose>
+      <link name="Marker"><visual name="Ball"><geometry><sphere><radius>0.45</radius></sphere></geometry><material><diffuse>0.9 0.45 0.1 1</diffuse></material></visual></link>
+    </model>
+  </world>
+</sdf>

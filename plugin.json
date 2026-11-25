@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "tesseract",
-  "version": "0.4.3",
+  "version": "0.7.28",
   "license": "MIT",
   "description": "Preview local 3D models, archives, scientific files, media, and robotics recordings beside your Codex chat.",
   "keywords": ["artifacts", "3d", "mcap", "viewer"],

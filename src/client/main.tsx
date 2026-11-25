@@ -10,9 +10,16 @@ import {
 import { createRoot } from 'react-dom/client';
 import type { Artifact, Selection } from '../shared/types';
 import {
+  artifactChangedEvent,
+  artifactRefreshDelay,
+  cancelHostFile,
+  canRefreshArtifact,
   canRetryHostFile,
+  clearSelection,
   connect,
+  hasPendingArtifactUpdate,
   openLocalFile,
+  releaseLocalFile,
   retryHostFile,
   select,
   state,
@@ -20,6 +27,7 @@ import {
 } from './backend';
 import { resolveViewer } from './registry';
 import { Icon } from './Icon';
+import { useSharedView } from './view-session';
 import './style.css';
 
 class PreviewBoundary extends Component<{ children: ReactNode }, { error?: string }> {
@@ -39,13 +47,33 @@ class PreviewBoundary extends Component<{ children: ReactNode }, { error?: strin
 }
 function Viewer() {
   const [artifact, setArtifact] = useState<Artifact>();
+  const [activePreview, setActivePreview] = useState<{ owner: Artifact; artifact: Artifact }>();
+  const activeArtifact =
+    activePreview && activePreview.owner === artifact ? activePreview.artifact : artifact;
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [filePicker, setFilePicker] = useState(false);
   const [openingFile, setOpeningFile] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [canFullscreen, setCanFullscreen] = useState(false);
+  const [saveCopy, setSaveCopy] = useState<{ artifact: Artifact; run: () => Promise<void> }>();
+  const [saving, setSaving] = useState<Artifact>();
   const input = useRef<HTMLInputElement>(null);
+  const referenceInput = useRef<HTMLInputElement>(null);
   const pendingFile = useRef<AbortController | null>(null);
+  const { addToChat, reference, recordSelection, viewerProps } = useSharedView(
+    activeArtifact,
+    setMessage,
+    setError,
+  );
+  const onPreview = useCallback(
+    (current: Artifact) => {
+      if (artifact) setActivePreview({ owner: artifact, artifact: current });
+    },
+    [artifact],
+  );
   const openFile = async (file: File) => {
+    cancelHostFile();
     pendingFile.current?.abort();
     const controller = new AbortController();
     pendingFile.current = controller;
@@ -53,7 +81,8 @@ function Viewer() {
     setOpeningFile(true);
     try {
       const next = await openLocalFile(file, controller.signal);
-      if (!controller.signal.aborted) setArtifact(next);
+      if (controller.signal.aborted) releaseLocalFile(next);
+      else setArtifact(next);
     } catch (error) {
       if (!controller.signal.aborted)
         setError(error instanceof Error ? error.message : 'Couldn’t open file.');
@@ -61,17 +90,16 @@ function Viewer() {
       if (!controller.signal.aborted) setOpeningFile(false);
     }
   };
-  const refresh = useCallback(async () => {
-    if (!artifact) return;
+  const copyReference = async () => {
+    if (!reference) return;
     try {
-      const next = await state(artifact);
-      setArtifact((current) =>
-        current?.id !== artifact.id || current.revision === next.revision ? current : next,
-      );
-    } catch (e) {
-      setError((e as Error).message);
+      await navigator.clipboard.writeText(reference);
+      setMessage('Reference copied');
+    } catch {
+      referenceInput.current?.focus();
+      referenceInput.current?.select();
     }
-  }, [artifact]);
+  };
   useEffect(() => {
     const showArtifact = (a: Artifact) => {
       pendingFile.current?.abort();
@@ -86,50 +114,136 @@ function Viewer() {
       },
       setError,
       () => setFilePicker(true),
+      (fullscreen, available) => {
+        setIsFullscreen(fullscreen);
+        setCanFullscreen(available);
+      },
     ).catch((e) => setError(e.message));
     return () => pendingFile.current?.abort();
   }, []);
   useEffect(() => {
-    if (!artifact || artifact.id.startsWith('local-')) return;
-    const timer = window.setInterval(refresh, 2000);
-    return () => clearInterval(timer);
-  }, [artifact, refresh]);
+    if (!artifact || !canRefreshArtifact(artifact)) return;
+    const controller = new AbortController();
+    let checking = false;
+    let queued = false;
+    let timer: number | undefined;
+    const schedule = () => {
+      clearTimeout(timer);
+      const delay = artifactRefreshDelay(artifact);
+      if (delay !== undefined && !controller.signal.aborted)
+        timer = window.setTimeout(() => {
+          if (artifactRefreshDelay(artifact) !== undefined) void check();
+        }, delay);
+    };
+    const check = async () => {
+      if (controller.signal.aborted || document.hidden) return;
+      if (checking) {
+        queued = true;
+        return;
+      }
+      clearTimeout(timer);
+      checking = true;
+      try {
+        const next = await state(artifact, controller.signal);
+        if (!controller.signal.aborted)
+          setArtifact((current) =>
+            current !== artifact || (current.id === next.id && current.revision === next.revision)
+              ? current
+              : next,
+          );
+      } catch (error) {
+        if (!controller.signal.aborted && !artifact.id.startsWith('local-'))
+          setError((error as Error).message);
+      } finally {
+        checking = false;
+        if (queued) {
+          queued = false;
+          void check();
+        } else schedule();
+      }
+    };
+    window.addEventListener(artifactChangedEvent, check);
+    document.addEventListener('visibilitychange', check);
+    if (hasPendingArtifactUpdate(artifact)) void check();
+    else schedule();
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+      window.removeEventListener(artifactChangedEvent, check);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [artifact]);
   const fullscreen = useCallback(() => {
-    toggleFullscreen().catch((e) => setError(e.message));
-  }, []);
+    if (!canFullscreen) return;
+    toggleFullscreen()
+      .then(setIsFullscreen)
+      .catch((e) => setError(e.message));
+  }, [canFullscreen]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === 'Escape' && isFullscreen && canFullscreen) {
+        e.preventDefault();
+        e.stopPropagation();
+        fullscreen();
+        return;
+      }
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
       if (e.key.toLowerCase() === 'f') fullscreen();
     };
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [fullscreen]);
+    window.addEventListener('keydown', key, true);
+    return () => window.removeEventListener('keydown', key, true);
+  }, [fullscreen, isFullscreen, canFullscreen]);
   useEffect(() => {
     setMessage('');
-  }, [artifact?.id, artifact?.revision]);
-  const onSelect = useCallback((selection: Selection) => {
-    select(selection)
-      .then((shared) =>
-        setMessage(
-          shared
-            ? selection.kind === 'object'
-              ? `Selected ${selection.objectName || selection.objectId} · available to agent`
-              : `Selected ${selection.timestampNs} ns · available to agent`
-            : 'Local selection · open by workspace path to share',
-        ),
-      )
-      .catch((e) => setError(e.message));
-  }, []);
+  }, [activeArtifact?.id, activeArtifact?.revision]);
+  useEffect(
+    () => () => {
+      if (artifact) releaseLocalFile(artifact);
+    },
+    [artifact],
+  );
+  const onSelect = useCallback(
+    (selection: Selection) => {
+      recordSelection(selection);
+      void select(selection).catch((e) => setError(e.message));
+    },
+    [recordSelection],
+  );
+  const onDeselect = useCallback(
+    (opened: Artifact) => {
+      recordSelection(undefined);
+      void clearSelection(opened).catch((e) => setError(e.message));
+    },
+    [recordSelection],
+  );
+  const onSaveCopy = useCallback(
+    (run?: () => Promise<void>) => {
+      setSaveCopy((previous) =>
+        run && activeArtifact
+          ? { artifact: activeArtifact, run }
+          : previous?.artifact === activeArtifact
+            ? undefined
+            : previous,
+      );
+    },
+    [activeArtifact],
+  );
+  const exportModel = async () => {
+    if (!saveCopy || saveCopy.artifact !== activeArtifact || saving === activeArtifact) return;
+    setSaving(activeArtifact);
+    try {
+      await saveCopy.run();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Couldn’t save model.');
+    } finally {
+      setSaving((current) => (current === activeArtifact ? undefined : current));
+    }
+  };
   const Renderer = artifact && resolveViewer(artifact.format);
   let preview: ReactNode;
-  if (openingFile) {
-    preview = (
-      <div className="empty" role="status">
-        Opening file…
-      </div>
-    );
-  } else if (artifact && Renderer) {
+  if (artifact && Renderer) {
     preview = (
       <PreviewBoundary key={`${artifact.id}-${artifact.revision}`}>
         <Suspense
@@ -139,11 +253,18 @@ function Viewer() {
             </div>
           }
         >
-          <Renderer artifact={artifact} onSelect={onSelect} />
+          <Renderer
+            artifact={artifact}
+            onSelect={onSelect}
+            onDeselect={onDeselect}
+            onSaveCopy={onSaveCopy}
+            onPreview={onPreview}
+            {...viewerProps}
+          />
         </Suspense>
       </PreviewBoundary>
     );
-  } else if (filePicker) {
+  } else if (!openingFile && (filePicker || error)) {
     preview = (
       <div className="file-drop">
         <span className="file-drop-icon">
@@ -155,7 +276,7 @@ function Viewer() {
         <span>or drop a file here</span>
       </div>
     );
-  } else {
+  } else if (!openingFile) {
     preview = (
       <div className="empty" role="status">
         Waiting for file…
@@ -165,59 +286,36 @@ function Viewer() {
   return (
     <main
       className="viewer"
+      aria-label={artifact?.name ?? 'Tesseract'}
       onDragOver={(event) => {
-        if (filePicker && event.dataTransfer.types.includes('Files')) event.preventDefault();
+        if (event.dataTransfer.types.includes('Files')) event.preventDefault();
       }}
       onDrop={(event) => {
         const file = event.dataTransfer.files[0];
-        if (!filePicker || !file) return;
+        if (!file) return;
         event.preventDefault();
         void openFile(file);
       }}
     >
-      {filePicker && (
-        <input
-          ref={input}
-          hidden
-          type="file"
-          aria-label="Choose a file"
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = '';
-            if (file) void openFile(file);
-          }}
-        />
-      )}
-      <header className="toolbar">
-        <span className="file-icon">
-          <Icon name="file" />
-        </span>
-        <span className="filename" title={artifact?.path}>
-          {artifact?.name ?? 'Tesseract'}
-        </span>
-        {artifact && <span className="badge">{artifact.format.label}</span>}
-        <div className="spacer" />
-        {filePicker && artifact && (
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Open file"
-            title="Open file"
-            onClick={() => input.current?.click()}
-          >
-            <Icon name="folder" />
+      <input
+        ref={input}
+        hidden
+        type="file"
+        aria-label="Choose a file"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = '';
+          if (file) void openFile(file);
+        }}
+      />
+      {reference && (
+        <div className="view-reference">
+          <input ref={referenceInput} aria-label="View reference" value={reference} readOnly />
+          <button type="button" onClick={() => void copyReference()}>
+            Copy reference
           </button>
-        )}
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Toggle fullscreen"
-          title="Toggle fullscreen (F)"
-          onClick={fullscreen}
-        >
-          <Icon name="expand" />
-        </button>
-      </header>
+        </div>
+      )}
       {error && (
         <div className="error" role="alert">
           <span>{error}</span>
@@ -241,18 +339,74 @@ function Viewer() {
           </button>
         </div>
       )}
-      <section className="viewport" aria-label="Artifact preview">
+      <section
+        className="viewport"
+        aria-label="Artifact preview"
+        onClickCapture={(event) => {
+          // Chromium handles fullscreen on the preceding clicks, before dblclick.
+          if (event.target instanceof HTMLVideoElement && event.detail > 0) event.preventDefault();
+        }}
+        onDoubleClick={(event) => {
+          if (
+            activeArtifact?.format.kind === 'model' ||
+            activeArtifact?.format.kind === 'mcap' ||
+            openingFile
+          )
+            return;
+          if (
+            event.target instanceof Element &&
+            event.target.closest('button, input, textarea, select, summary, a, [role="button"]')
+          )
+            return;
+          void addToChat();
+        }}
+      >
         {preview}
+        {(canFullscreen || (saveCopy && saveCopy.artifact === activeArtifact)) && (
+          <div className="preview-actions" role="group" aria-label="Preview actions">
+            {saveCopy && saveCopy.artifact === activeArtifact && (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Save copy"
+                title="Save copy"
+                disabled={saving === activeArtifact || openingFile}
+                onClick={() => void exportModel()}
+              >
+                <Icon name="download" />
+              </button>
+            )}
+            {canFullscreen && (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                title={`${isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} (F)`}
+                onClick={fullscreen}
+              >
+                <Icon name={isFullscreen ? 'collapse' : 'expand'} />
+              </button>
+            )}
+          </div>
+        )}
+        {openingFile && (
+          <div className="opening-file">
+            <span role="status">Opening file…</span>
+            <button
+              type="button"
+              onClick={() => {
+                pendingFile.current?.abort();
+                setOpeningFile(false);
+                setFilePicker(true);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
       </section>
-      {artifact && (
+      {artifact && message && (
         <footer>
-          <span title={`${artifact.size.toLocaleString()} bytes`}>
-            {artifact.size < 1024
-              ? `${artifact.size} B`
-              : artifact.size < 1024 * 1024
-                ? `${(artifact.size / 1024).toFixed(1)} KB`
-                : `${(artifact.size / 1024 / 1024).toFixed(1)} MB`}
-          </span>
           <span className="status" role="status">
             {message}
           </span>

@@ -4,6 +4,7 @@ import { MessageReader } from '@foxglove/rosmsg-serialization';
 import { McapStreamReader } from '@mcap/core';
 import { NetCDFReader } from 'netcdfjs';
 import { inspectNpy } from '../../shared/numpy';
+import { editableHdf5, editHdf5Value, isHdf5Link } from './hdf5-edits';
 
 const MiB = 1024 * 1024;
 const messageLimit = 100;
@@ -20,12 +21,22 @@ function inspectNetCdf(data: ArrayBuffer) {
         (total, id) => total * (reader.dimensions[id]?.size || reader.recordDimension.length),
         1,
       );
+      let preview: ReturnType<NetCDFReader['getDataVariable']> | string =
+        'Variable exceeds 10,000 value preview limit';
+      if (count <= valueLimit) {
+        preview = reader.getDataVariable(variable);
+        if (!variable.record) {
+          // The stored variable size includes padding. NC_BYTE is signed.
+          preview = preview.slice(0, count);
+          if (variable.type === 'byte') {
+            const bytes = new DataView(data, variable.offset, count);
+            preview = Array.from({ length: count }, (_, index) => bytes.getInt8(index));
+          }
+        }
+      }
       return {
         ...variable,
-        preview:
-          count <= valueLimit
-            ? reader.getDataVariable(variable)
-            : 'Variable exceeds 10,000 value preview limit',
+        preview,
       };
     }),
   };
@@ -88,7 +99,12 @@ async function inspectRosBag(data: ArrayBuffer) {
   await bag.open();
   const messages = [];
   for await (const message of bag.messageIterator()) {
-    messages.push({ topic: message.topic, timestamp: message.timestamp, message: message.message });
+    const { sec, nsec } = message.timestamp;
+    messages.push({
+      topic: message.topic,
+      timestampNs: String(BigInt(sec) * 1_000_000_000n + BigInt(nsec)),
+      message: message.message,
+    });
     if (messages.length >= messageLimit) break;
   }
   return {
@@ -115,7 +131,7 @@ async function inspectHdf5(data: ArrayBuffer) {
       for (const name of group.keys()) {
         if (++visited > 2000) throw new Error('HDF5 exceeds 2,000 objects.');
         // Links may point to other files or introduce cycles.
-        if (group.get_link(name)) {
+        if (isHdf5Link(group, name)) {
           datasets.push({ name, link: 'Link skipped' });
           continue;
         }
@@ -128,6 +144,7 @@ async function inspectHdf5(data: ArrayBuffer) {
             path: entity.path,
             shape: entity.shape,
             dtype: entity.dtype,
+            editable: numeric && editableHdf5(entity),
             preview:
               numeric && count <= valueLimit
                 ? entity.value
@@ -224,9 +241,28 @@ function formatPreview(result: unknown) {
   return text;
 }
 
-self.onmessage = async (event: MessageEvent<{ data: ArrayBuffer; kind: string }>) => {
+self.onmessage = async (
+  event: MessageEvent<{
+    data: ArrayBuffer;
+    kind: string;
+    edit?: { name: string; index: number; value: string };
+  }>,
+) => {
   try {
-    const { data, kind } = event.data;
+    const { data, kind, edit } = event.data;
+    if (kind === 'hdf5' && edit) {
+      const h5 = await import('h5wasm');
+      const bytes = await editHdf5Value(
+        h5,
+        data,
+        edit.name,
+        edit.index,
+        edit.value,
+        '/edit-input.h5',
+      );
+      self.postMessage({ bytes }, { transfer: [bytes.buffer as ArrayBuffer] });
+      return;
+    }
     const result = await inspect(data, kind);
     const messages = 'messages' in result ? result.messages : undefined;
     self.postMessage({ text: formatPreview(result), messages });

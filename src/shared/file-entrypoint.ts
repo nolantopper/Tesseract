@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { formats } from './formats.js';
+import { formats, rasterIds } from './formats.js';
 
 export const stlFileInput = z.object({
   file: z.object({
@@ -11,7 +11,9 @@ export const stlFileInput = z.object({
 // Built-in workspace media coverage for extensions in the format registry.
 const codexMediaExtensions = new Set(['mp4', 'webm', 'ogv', 'mp3', 'wav', 'ogg']);
 export const nativeExtensions = formats
-  .filter((format) => format.id !== 'text' && format.kind !== 'image')
+  .filter(
+    (format) => format.id !== 'text' && (format.kind !== 'image' || rasterIds.includes(format.id)),
+  )
   .flatMap((format) => format.extensions)
   .filter((ext) => !codexMediaExtensions.has(ext))
   .map((ext) => `.${ext}`);

@@ -1,5 +1,22 @@
 import { Unzip, UnzipInflate, Gunzip } from 'fflate';
 export const archiveLimit = 64 * 1024 * 1024;
+
+export function gzipFilename(data: Uint8Array) {
+  if (data.length < 18 || data[0] !== 0x1f || data[1] !== 0x8b || data[2] !== 8 || data[3] & 0xe0)
+    throw new Error('Invalid GZIP header.');
+  let start = 10;
+  if (data[3] & 4) start += 2 + (data[10] | (data[11] << 8));
+  if (start > data.length - 8) throw new Error('Truncated GZIP header.');
+  if (!(data[3] & 8)) return { start, end: start, name: undefined };
+  const terminator = data.subarray(start, Math.min(start + 4097, data.length - 8)).indexOf(0);
+  if (terminator < 0) throw new Error('Invalid GZIP filename.');
+  return {
+    start,
+    end: start + terminator + 1,
+    name: new TextDecoder('iso-8859-1').decode(data.subarray(start, start + terminator)),
+  };
+}
+
 export function safeEntry(name: string) {
   if (
     !name ||
@@ -74,7 +91,16 @@ export function unpack(data: Uint8Array, kind: string, name: string): Record<str
       bytes.set(c, offset);
       offset += c.length;
     }
-    add(name.replace(/\.tgz$/i, '.tar').replace(/\.(?:gz|gzip)$/i, '') || 'content', bytes);
+    let filename: string | undefined;
+    try {
+      const stored = gzipFilename(data).name;
+      if (stored && /^[^/\\]+$/.test(stored) && stored !== '.' && stored !== '..')
+        filename = safeEntry(stored);
+    } catch {}
+    add(
+      filename || name.replace(/\.tgz$/i, '.tar').replace(/\.(?:gz|gzip)$/i, '') || 'content',
+      bytes,
+    );
   } else if (kind === 'tar') {
     const text = (start: number, length: number) =>
       new TextDecoder().decode(data.subarray(start, start + length)).split('\0')[0];

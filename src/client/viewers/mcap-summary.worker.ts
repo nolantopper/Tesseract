@@ -1,22 +1,24 @@
 import { McapIndexedReader } from '@mcap/core';
-self.onmessage = async (event: MessageEvent<ArrayBuffer>) => {
+self.onmessage = async (event: MessageEvent<File>) => {
   try {
-    const data = new Uint8Array(event.data);
+    const file = event.data;
     let budget = 64 * 1024 * 1024;
     const reader = await McapIndexedReader.Initialize({
       readable: {
-        size: async () => BigInt(data.length),
+        size: async () => BigInt(file.size),
         read: async (offset, length) => {
           if (
             offset < 0n ||
             length < 0n ||
-            offset + length > BigInt(data.length) ||
+            offset + length > BigInt(file.size) ||
             length > 16n * 1024n * 1024n ||
             length > BigInt(budget)
           )
             throw new Error('MCAP summary read exceeds limits.');
           budget -= Number(length);
-          return data.subarray(Number(offset), Number(offset + length));
+          return new Uint8Array(
+            await file.slice(Number(offset), Number(offset + length)).arrayBuffer(),
+          );
         },
       },
     });

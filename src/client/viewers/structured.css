@@ -1,0 +1,188 @@
+.structured-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  padding: 12px;
+}
+.structured-controls,
+.structured-pagination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.structured-controls {
+  flex-wrap: wrap;
+}
+.structured-controls select {
+  max-width: 100%;
+}
+.structured-controls input {
+  min-width: 100px;
+  flex: 1;
+}
+.structured-pagination {
+  margin-inline-start: auto;
+}
+.structured-pagination .previous svg {
+  transform: rotate(180deg);
+}
+.structured-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.structured-scroll:focus-visible,
+.structured-table tr:focus-visible,
+.map-stage canvas:focus-visible {
+  outline: 2px solid var(--color-ring-primary, var(--accent));
+  outline-offset: -2px;
+}
+.structured-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  text-align: start;
+  font-variant-numeric: tabular-nums;
+}
+.structured-table th,
+.structured-table td {
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border);
+}
+.structured-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+.structured-table small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: normal;
+}
+.structured-table td {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.structured-table td em {
+  color: var(--muted);
+}
+.structured-table tbody tr {
+  cursor: pointer;
+}
+.structured-table tbody tr:hover,
+.structured-table tr[data-selected] {
+  background: var(--hover);
+}
+.structured-table tr[data-selected] th {
+  box-shadow: inset 2px 0 var(--accent);
+}
+.structured-table tr[data-shared] {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.structured-table th .icon {
+  display: inline-block;
+  margin-inline-start: 4px;
+  vertical-align: middle;
+}
+.map-stage {
+  position: relative;
+  flex: 1;
+  min-height: 140px;
+  overflow: hidden;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+.map-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+.map-stage canvas:active {
+  cursor: grabbing;
+}
+.map-controls {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.map-view details {
+  max-height: 34%;
+  overflow: auto;
+}
+.structured-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  max-height: 34%;
+  margin: 0;
+  overflow: auto;
+}
+.structured-detail dt {
+  color: var(--muted);
+}
+.structured-detail dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.edit-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.edit-value input {
+  flex: 1;
+  min-width: 90px;
+}
+.edit-value-actions {
+  display: flex;
+  gap: 4px;
+}
+.array-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.array-editor label input {
+  width: 6em;
+  min-width: 0;
+}
+.edit-value-document {
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: 0;
+}
+.edit-value-document textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  resize: none;
+  font: inherit;
+  font-family: var(--mono);
+  padding: 8px;
+  background: var(--panel);
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}

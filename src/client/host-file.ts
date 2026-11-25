@@ -4,11 +4,16 @@ export const hostPreviewLimit = 64 * 1024 * 1024;
 
 // The URI is opaque. Read only the response to the host-authorized request;
 // hosts may return a canonical URI rather than echoing the requested URI.
-export function hostResourceFile(resource: ReadResourceResult, uri: string, name: string): File {
+export function hostResourceContent(resource: ReadResourceResult, uri: string) {
   const content =
     resource.contents.find((item) => item.uri === uri) ??
     (resource.contents.length === 1 ? resource.contents[0] : undefined);
   if (!content) throw new Error('The host did not return a unique opened-file resource.');
+  return content;
+}
+
+export function hostResourceFile(resource: ReadResourceResult, uri: string, name: string): File {
+  const content = hostResourceContent(resource, uri);
   let data: BlobPart;
   if ('blob' in content) {
     if (content.blob.length > 4 * Math.ceil(hostPreviewLimit / 3))

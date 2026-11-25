@@ -1,10 +1,88 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { BoxGeometry, Group, Mesh, TorusGeometry } from 'three';
+import {
+  BoxGeometry,
+  CylinderGeometry,
+  Group,
+  Mesh,
+  TorusGeometry,
+  type BufferGeometry,
+} from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import { McapWriter } from '@mcap/core';
 import { resolve } from 'node:path';
+
+type SamplePart = {
+  name: string;
+  geometry: BufferGeometry;
+  color: [number, number, number, number];
+};
+
+async function writeGlb(path: string, parts: SamplePart[]) {
+  const chunks: Buffer[] = [];
+  const bufferViews: { buffer: number; byteOffset: number; byteLength: number }[] = [];
+  let byteOffset = 0;
+  const accessors = parts.flatMap(({ geometry }) => {
+    const flat = geometry.toNonIndexed();
+    const positions = new Float32Array(flat.getAttribute('position').array);
+    const normals = new Float32Array(flat.getAttribute('normal').array);
+    const positionView = bufferViews.length;
+    for (const attribute of [positions, normals]) {
+      chunks.push(Buffer.from(attribute.buffer));
+      bufferViews.push({ buffer: 0, byteOffset, byteLength: attribute.byteLength });
+      byteOffset += attribute.byteLength;
+    }
+    flat.computeBoundingBox();
+    const { min, max } = flat.boundingBox!;
+    flat.dispose();
+    return [
+      {
+        bufferView: positionView,
+        componentType: 5126,
+        count: positions.length / 3,
+        type: 'VEC3',
+        min: min.toArray(),
+        max: max.toArray(),
+      },
+      {
+        bufferView: positionView + 1,
+        componentType: 5126,
+        count: normals.length / 3,
+        type: 'VEC3',
+      },
+    ];
+  });
+  const gltf = {
+    asset: { version: '2.0', generator: 'Tesseract samples' },
+    scene: 0,
+    scenes: [{ nodes: parts.map((_, i) => i) }],
+    nodes: parts.map(({ name }, mesh) => ({ name, mesh })),
+    meshes: parts.map((_, material) => ({
+      primitives: [{ attributes: { POSITION: 2 * material, NORMAL: 2 * material + 1 }, material }],
+    })),
+    materials: parts.map(({ color }) => ({
+      pbrMetallicRoughness: { baseColorFactor: color, metallicFactor: 0.3, roughnessFactor: 0.4 },
+    })),
+    buffers: [{ byteLength: byteOffset }],
+    bufferViews,
+    accessors,
+  };
+  const jsonText = JSON.stringify(gltf);
+  const json = Buffer.alloc(Math.ceil(Buffer.byteLength(jsonText) / 4) * 4, 0x20);
+  json.write(jsonText);
+  const header = Buffer.alloc(12);
+  header.write('glTF');
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(12 + 8 + json.length + 8 + byteOffset, 8);
+  const jsonHeader = Buffer.alloc(8);
+  jsonHeader.writeUInt32LE(json.length);
+  jsonHeader.writeUInt32LE(0x4e4f534a, 4);
+  const binHeader = Buffer.alloc(8);
+  binHeader.writeUInt32LE(byteOffset);
+  binHeader.writeUInt32LE(0x004e4942, 4);
+  await writeFile(path, Buffer.concat([header, jsonHeader, json, binHeader, ...chunks]));
+}
 
 export async function makeSamples(dir: string) {
   await mkdir(dir, { recursive: true });
@@ -23,59 +101,35 @@ export async function makeSamples(dir: string) {
   const stl = new STLExporter().parse(group, { binary: true });
   await writeFile(resolve(dir, 'bracket.stl'), new Uint8Array(stl.buffer));
   await writeFile(resolve(dir, 'bracket.obj'), new OBJExporter().parse(group));
-  const flat = geometry.toNonIndexed();
-  const positions = new Float32Array(flat.getAttribute('position').array);
-  const normals = new Float32Array(flat.getAttribute('normal').array);
-  const binary = Buffer.concat([Buffer.from(positions.buffer), Buffer.from(normals.buffer)]);
-  flat.computeBoundingBox();
-  const gltf = {
-    asset: { version: '2.0', generator: 'Tesseract samples' },
-    scene: 0,
-    scenes: [{ nodes: [0] }],
-    nodes: [{ name: 'Bearing bracket', mesh: 0 }],
-    meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, material: 0 }] }],
-    materials: [
-      {
-        pbrMetallicRoughness: {
-          baseColorFactor: [0.52, 0.65, 0.75, 1],
-          metallicFactor: 0.3,
-          roughnessFactor: 0.4,
-        },
-      },
-    ],
-    buffers: [{ byteLength: binary.length }],
-    bufferViews: [
-      { buffer: 0, byteOffset: 0, byteLength: positions.byteLength },
-      { buffer: 0, byteOffset: positions.byteLength, byteLength: normals.byteLength },
-    ],
-    accessors: [
-      {
-        bufferView: 0,
-        componentType: 5126,
-        count: positions.length / 3,
-        type: 'VEC3',
-        min: flat.boundingBox!.min.toArray(),
-        max: flat.boundingBox!.max.toArray(),
-      },
-      { bufferView: 1, componentType: 5126, count: normals.length / 3, type: 'VEC3' },
-    ],
-  };
-  const jsonText = JSON.stringify(gltf);
-  const json = Buffer.from(jsonText.padEnd(Math.ceil(Buffer.byteLength(jsonText) / 4) * 4, ' '));
-  const header = Buffer.alloc(12);
-  header.write('glTF');
-  header.writeUInt32LE(2, 4);
-  header.writeUInt32LE(12 + 8 + json.length + 8 + binary.length, 8);
-  const jsonHeader = Buffer.alloc(8);
-  jsonHeader.writeUInt32LE(json.length);
-  jsonHeader.writeUInt32LE(0x4e4f534a, 4);
-  const binHeader = Buffer.alloc(8);
-  binHeader.writeUInt32LE(binary.length);
-  binHeader.writeUInt32LE(0x004e4942, 4);
-  await writeFile(
-    resolve(dir, 'bracket.glb'),
-    Buffer.concat([header, jsonHeader, json, binHeader, binary]),
-  );
+  await writeGlb(resolve(dir, 'bracket.glb'), [
+    { name: mesh.name, geometry, color: [0.52, 0.65, 0.75, 1] },
+  ]);
+  const vise: SamplePart[] = [
+    {
+      name: 'Base',
+      geometry: new BoxGeometry(6.4, 0.5, 2.5).translate(0, -0.95, 0),
+      color: [0.22, 0.28, 0.33, 1],
+    },
+    {
+      name: 'Fixed jaw',
+      geometry: new BoxGeometry(1.1, 1.55, 2).translate(-1.8, 0.075, 0),
+      color: [0.2, 0.36, 0.54, 1],
+    },
+    {
+      name: 'Sliding jaw',
+      geometry: new BoxGeometry(1.1, 1.55, 2).translate(1.8, 0.075, 0),
+      color: [0.56, 0.3, 0.12, 1],
+    },
+    {
+      name: 'Lead screw',
+      geometry: new CylinderGeometry(0.24, 0.24, 4.8, 24)
+        .rotateZ(Math.PI / 2)
+        .translate(0, -0.28, 0),
+      color: [0.48, 0.49, 0.54, 1],
+    },
+  ];
+  await writeGlb(resolve(dir, 'bench-vise.glb'), vise);
+  for (const part of vise) part.geometry.dispose();
   await writeFile(
     resolve(dir, 'pyramid.ply'),
     'ply\nformat ascii 1.0\nelement vertex 5\nproperty float x\nproperty float y\nproperty float z\nelement face 6\nproperty list uchar int vertex_indices\nend_header\n-1 0 -1\n1 0 -1\n1 0 1\n-1 0 1\n0 2 0\n3 0 1 4\n3 1 2 4\n3 2 3 4\n3 3 0 4\n3 0 3 2\n3 0 2 1\n',

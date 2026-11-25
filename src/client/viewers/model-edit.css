@@ -1,0 +1,24 @@
+.model-color-editor {
+  position: absolute;
+  inset-block-start: 12px;
+  inset-inline-end: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: calc(100% - 24px);
+  padding: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.model-color-editor input[type='color'] {
+  width: 32px;
+  height: 32px;
+  padding: 3px;
+}
+.model-color-editor [role='alert'] {
+  flex-basis: 100%;
+  padding: 4px;
+  color: var(--muted);
+}

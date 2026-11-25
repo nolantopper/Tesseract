@@ -18,6 +18,16 @@ test('router prefers file signatures and returns an explicit fallback', () => {
   assert.equal(detectFormat('image.stl', new Uint8Array([0x89, 0x50, 0x4e, 0x47])).id, 'png');
   assert.equal(detectFormat('file.OBJ', new Uint8Array()).id, 'obj');
   assert.equal(detectFormat('file.step', new Uint8Array()).id, 'step');
+  assert.equal(detectFormat('file.bin', Buffer.from('#usda 1.0\ndef Cube "body" {}')).id, 'usda');
+  assert.equal(detectFormat('file.bin', Buffer.from('PXR-USDC')).id, 'usdc');
+  assert.equal(
+    detectFormat('robot.xml', Buffer.from('<?xml version="1.0"?><robot name="arm">')).id,
+    'urdf',
+  );
+  assert.equal(detectFormat('scene.xml', Buffer.from('<mujoco model="scene">')).id, 'mjcf');
+  assert.equal(detectFormat('scene.xml', Buffer.from('<sdf version="1.7">')).id, 'sdf');
+  assert.equal(detectFormat('document.xml', Buffer.from('<document/>')).id, 'text');
+  assert.equal(detectFormat('scene.usdz', Buffer.from([0x50, 0x4b, 0x03, 0x04])).id, 'usdz');
   assert.equal(
     detectFormat('file.bin', new Uint8Array(), 'application/octet-stream').id,
     'unknown',
@@ -169,6 +179,9 @@ test('real stdio MCP exposes tools, UI resource, byte reads, and shared selectio
     const resource = await client.readResource({ uri: RESOURCE_URI });
     assert.match((resource.contents[0] as any).text, /<title>Tesseract<\/title>/);
     assert.equal(resource.contents[0].mimeType, 'text/html;profile=mcp-app');
+    assert.deepEqual(resource.contents[0]._meta?.['openai/ui'], {
+      availableDisplayModes: ['inline', 'fullscreen'],
+    });
     await assert.rejects(
       client.readResource({ uri: 'ui://tesseract/viewer-unknown.html' }),
       /Resource not found/,

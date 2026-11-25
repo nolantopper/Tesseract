@@ -40,9 +40,11 @@ const packageFiles = [
   'skills',
   'scripts/configure-plugin.mjs',
   'samples/bracket.glb',
+  'samples/bench-vise.glb',
   'samples/bracket.stl',
   'samples/robot.mcap',
   'samples/video.mp4',
+  'samples/simulation',
 ];
 
 async function smokeTest(root) {
@@ -55,7 +57,12 @@ async function smokeTest(root) {
   });
   try {
     await client.connect(transport);
-    assert.deepEqual(client.getServerVersion(), {
+    const { icons, ...serverInfo } = client.getServerVersion();
+    const panelIcon = await readFile(join(root, 'assets/panel-icon.png'), 'base64');
+    assert.deepEqual(icons, [
+      { src: `data:image/png;base64,${panelIcon}`, mimeType: 'image/png', sizes: ['64x64'] },
+    ]);
+    assert.deepEqual(serverInfo, {
       name,
       title: manifest.extensions['com.openai'].interface.displayName,
       version,
@@ -66,7 +73,7 @@ async function smokeTest(root) {
     assert.equal(picker.structuredContent?.picker, true);
     const sample = await client.callTool({
       name: 'artifact_open',
-      arguments: { path: 'bracket.glb' },
+      arguments: { path: 'bench-vise.glb' },
     });
     assert.equal(sample.structuredContent?.artifact?.format?.id, 'glb');
     const blocked = await client.callTool({
@@ -76,11 +83,13 @@ async function smokeTest(root) {
     assert.equal(blocked.isError, true);
     const resource = await client.readResource({ uri: 'ui://tesseract/viewer.html' });
     assert.match(resource.contents[0].text, /<title>Tesseract<\/title>/);
-    const parser = await client.callTool({
-      name: 'artifact_parser_script',
-      arguments: { kind: 'data', offset: 0 },
-    });
-    assert.ok(parser.structuredContent?.data);
+    for (const kind of ['data', 'advanced', 'structured', 'raster', 'extended-archive']) {
+      const parser = await client.callTool({
+        name: 'artifact_parser_script',
+        arguments: { kind, offset: 0 },
+      });
+      assert.ok(parser.structuredContent?.data, `Missing ${kind} worker`);
+    }
   } finally {
     await client.close();
   }
