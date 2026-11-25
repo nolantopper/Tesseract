@@ -2830,8 +2830,10 @@ test('the open STEP panel renders both its own save and an external revision', a
   const countRed = async () => {
     await canvas.press('2');
     const capture = (await runSiteTool(frame, 'tesseract_read_view', { includeImage: true })) as {
-      content: { data: string }[];
+      content?: { data: string }[];
     };
+    const thumbnail = capture.content?.[0]?.data;
+    if (!thumbnail) return Number.NaN;
     return canvas.evaluate(async (element, base64) => {
       const document = element.ownerDocument;
       const image = document.createElement('img');
@@ -2852,9 +2854,10 @@ test('the open STEP panel renders both its own save and an external revision', a
         )
           red++;
       return red;
-    }, capture.content[0].data);
+    }, thumbnail);
   };
   const redBefore = await countRed();
+  expect(Number.isFinite(redBefore)).toBe(true);
   const bytes = (await runSiteTool(frame, 'tesseract_read_file_bytes', {
     offset,
     length: original.length,
